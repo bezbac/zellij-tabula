@@ -2,6 +2,6 @@
 
 chpwd() {
   if [[ -n $ZELLIJ ]]; then
-    zellij pipe --name tabula -- "$ZELLIJ_PANE_ID $PWD"
+    zellij pipe --name tabula -- "'$ZELLIJ_PANE_ID' '$PWD'"
   fi
 }
