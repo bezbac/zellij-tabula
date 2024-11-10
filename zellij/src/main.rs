@@ -1,13 +1,18 @@
-use ansi_term::{Colour::Fixed, Style};
 use zellij_tile::prelude::*;
 
+use std::convert::TryFrom;
 use std::{collections::BTreeMap, path::PathBuf};
 
 #[derive(Default)]
 struct State {
-    tabs: Vec<TabInfo>,
-    panes: PaneManifest,
+    /// The configuration passed to the plugin from zellij
     userspace_configuration: BTreeMap<String, String>,
+
+    /// The tabs currently open in the terminal, set by the `TabUpdate` event
+    tabs: Vec<TabInfo>,
+
+    /// The panes currently open in the terminal, set by the `PaneUpdate` event
+    panes: PaneManifest,
 
     /// Maps pane id to the working dir open in the pane
     pane_working_dirs: BTreeMap<u32, PathBuf>,
@@ -33,34 +38,30 @@ impl ZellijPlugin for State {
     }
 
     fn pipe(&mut self, pipe_message: PipeMessage) -> bool {
-        eprintln!("pipe_message: {:?}", pipe_message);
+        eprintln!("pipe_message: {pipe_message:?}");
 
         if pipe_message.name != "tabula" {
             return false;
         }
 
-        if pipe_message.payload.is_none() {
+        let Some(payload) = pipe_message.payload else {
             eprintln!("Expected payload, got none");
             return false;
-        }
+        };
 
-        let payload = pipe_message.payload.unwrap();
-
-        let mut parts: Vec<&str> = payload.split(" ").collect();
+        let parts: Vec<&str> = payload.split(' ').collect();
 
         if parts.len() != 2 {
             eprintln!("Expected exactly 2 parts, got {}", parts.len());
             return false;
         }
 
-        let mut iter = parts.into_iter();
-
-        let pane_id = {
-            rem_first_and_last(iter.next().unwrap())
-                .parse::<u32>()
-                .unwrap()
+        let Ok(pane_id) = rem_first_and_last(parts[0]).parse::<u32>() else {
+            eprintln!("Failed to parse pane id: {}", parts[0]);
+            return false;
         };
-        let pwd = rem_first_and_last(iter.next().unwrap());
+
+        let pwd = rem_first_and_last(parts[1]);
 
         self.pane_working_dirs
             .insert(pane_id, pwd.to_string().into());
@@ -86,13 +87,12 @@ impl ZellijPlugin for State {
         false
     }
 
-    fn render(&mut self, rows: usize, cols: usize) {}
+    fn render(&mut self, _rows: usize, _cols: usize) {}
 }
 
 impl State {
     fn organize(&self) {
         'tab: for tab in &self.tabs {
-            let tab_name = tab.name.to_string();
             let tab_position = tab.position;
 
             let panes: Vec<PaneInfo> = self
@@ -101,8 +101,7 @@ impl State {
                 .clone()
                 .into_iter()
                 .filter(|(tab_index, _)| tab_index == &tab_position)
-                .map(|(_, p)| p)
-                .flatten()
+                .flat_map(|(_, p)| p)
                 .filter(|p| !p.is_suppressed && !p.is_plugin)
                 .collect();
 
@@ -116,33 +115,32 @@ impl State {
             }
 
             let tab_name = 'tab_name: {
-                if working_dirs_in_tab.len() < 1 {
+                let Some(first_working_dir) = working_dirs_in_tab.first().copied() else {
+                    // If there are no working dirs, skip this tab
                     continue 'tab;
-                }
+                };
 
                 if working_dirs_in_tab.len() == 1 {
-                    break 'tab_name format!("{}", working_dirs_in_tab.first().unwrap().display());
+                    break 'tab_name format!("{}", first_working_dir.display());
                 }
 
                 // If all working_dirs_in_tab are the same, use that as the tab name
                 if working_dirs_in_tab
                     .iter()
-                    .all(|dir| dir == working_dirs_in_tab.first().unwrap())
+                    .all(|dir| *dir == first_working_dir)
                 {
-                    break 'tab_name format!(
-                        "{}/ ({} panes)",
-                        working_dirs_in_tab
-                            .first()
-                            .unwrap()
-                            .to_str()
-                            .unwrap()
-                            .trim_end_matches("/"),
-                        panes.len()
-                    );
+                    match first_working_dir.to_str() {
+                        Some(str) => {
+                            break 'tab_name format!("{}/", str.trim_end_matches('/'));
+                        }
+                        None => {
+                            continue 'tab;
+                        }
+                    }
                 }
 
                 // Get the common directory of all entries in working_dirs_in_tab
-                let mut common_dir = working_dirs_in_tab.first().unwrap().clone().clone();
+                let mut common_dir = first_working_dir.clone();
 
                 for dir in &working_dirs_in_tab {
                     while !dir.starts_with(&common_dir) {
@@ -154,13 +152,12 @@ impl State {
                     }
                 }
 
-                let common_dir_str = common_dir.to_str();
-
-                if common_dir_str.is_none() {
-                    continue 'tab;
-                }
-
-                let common_dir_str = common_dir_str.unwrap().trim_end_matches("/");
+                let common_dir_str = match common_dir.to_str() {
+                    Some(str) => str.trim_end_matches('/'),
+                    None => {
+                        continue 'tab;
+                    }
+                };
 
                 format!("{}/* ({} panes)", common_dir_str, panes.len())
             };
@@ -169,20 +166,9 @@ impl State {
                 continue;
             }
 
-            rename_tab(tab_position as u32, tab_name);
+            if let Ok(tab_position) = u32::try_from(tab_position) {
+                rename_tab(tab_position, tab_name);
+            }
         }
     }
-}
-
-pub const CYAN: u8 = 51;
-pub const GRAY_LIGHT: u8 = 238;
-pub const GRAY_DARK: u8 = 245;
-pub const WHITE: u8 = 15;
-pub const BLACK: u8 = 16;
-pub const RED: u8 = 124;
-pub const GREEN: u8 = 154;
-pub const ORANGE: u8 = 166;
-
-fn color_bold(color: u8, text: &str) -> String {
-    format!("{}", Style::new().fg(Fixed(color)).bold().paint(text))
 }

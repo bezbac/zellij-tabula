@@ -5,6 +5,5 @@ authors = ["Ben Bachem <10088265+bezbac@users.noreply.github.com>"]
 edition = "2018"
 
 [dependencies]
-ansi_term = "0.12.1"
 zellij-tile = "0.40.1"
 chrono = "0.4.0"
