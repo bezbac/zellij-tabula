@@ -1,0 +1,27 @@
+name: "Check"
+
+on:
+  workflow_dispatch:
+  push:
+
+defaults:
+  run:
+    working-directory: ./zellij
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install rust toolchain
+        uses: dtolnay/rust-toolchain@1.82.0
+        with:
+          components: rustfmt, clippy
+          targets: wasm32-wasi
+
+      - name: Check formatting
+        run: rustfmt --check
+
+      - name: Check clippy
+        run: cargo clippy -- -D clippy::all -D clippy::pedantic -A clippy::no_mangle_with_rust_abi
