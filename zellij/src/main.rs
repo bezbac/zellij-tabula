@@ -1,6 +1,7 @@
 use zellij_tile::prelude::*;
 
 use std::convert::TryFrom;
+use std::path::Path;
 use std::{collections::BTreeMap, path::PathBuf};
 
 #[derive(Default)]
@@ -119,7 +120,7 @@ impl State {
                 };
 
                 if working_dirs_in_tab.len() == 1 {
-                    break 'tab_name format!("{}", first_working_dir.display());
+                    break 'tab_name self.format_path(first_working_dir);
                 }
 
                 // If all working_dirs_in_tab are the same, use that as the tab name
@@ -127,14 +128,10 @@ impl State {
                     .iter()
                     .all(|dir| *dir == first_working_dir)
                 {
-                    match first_working_dir.to_str() {
-                        Some(str) => {
-                            break 'tab_name format!("{}/", str.trim_end_matches('/'));
-                        }
-                        None => {
-                            continue 'tab;
-                        }
-                    }
+                    break 'tab_name format!(
+                        "{}/",
+                        self.format_path(first_working_dir).trim_end_matches('/')
+                    );
                 }
 
                 // Get the common directory of all entries in working_dirs_in_tab
@@ -150,14 +147,11 @@ impl State {
                     }
                 }
 
-                let common_dir_str = match common_dir.to_str() {
-                    Some(str) => str.trim_end_matches('/'),
-                    None => {
-                        continue 'tab;
-                    }
-                };
-
-                format!("{}/* ({} panes)", common_dir_str, panes.len())
+                format!(
+                    "{}/* ({} panes)",
+                    self.format_path(&common_dir).trim_end_matches('/'),
+                    panes.len()
+                )
             };
 
             if self.tabs[tab_position].name == tab_name {
@@ -168,5 +162,18 @@ impl State {
                 rename_tab(tab_position + 1, tab_name);
             }
         }
+    }
+
+    fn format_path(&self, path: &Path) -> String {
+        let mut result = format!("{}", path.display());
+
+        if let Some(home_dir) = self.userspace_configuration.get("home_dir") {
+            let home_dir = home_dir.trim_end_matches('/');
+            if path.starts_with(home_dir) {
+                result = format!("~{}", result.trim_start_matches(home_dir));
+            }
+        }
+
+        result
     }
 }
