@@ -82,8 +82,6 @@ impl ZellijPlugin for State {
             _ => (),
         };
 
-        self.organize();
-
         false
     }
 
