@@ -22,8 +22,8 @@ struct State {
     /// The home directory of the user
     home_dir: Option<PathBuf>,
 
-    // Whether the home directory event was ever received
-    received_home_dir: bool,
+    /// Whether the plugin has the necessary permissions
+    permissions: Option<PermissionStatus>,
 }
 
 register_plugin!(State);
@@ -35,26 +35,20 @@ fn rem_first_and_last(value: &str) -> &str {
     chars.as_str()
 }
 
-fn run_get_home_dir_command() {
-    let mut context = BTreeMap::new();
-    context.insert(String::from("plugin"), String::from("tabula"));
-    context.insert(String::from("function"), String::from("get_home_dir"));
-    run_command(&["echo", "$HOME"], context);
-}
-
 impl ZellijPlugin for State {
     fn load(&mut self, configuration: BTreeMap<String, String>) {
         self.userspace_configuration = configuration;
         request_permission(&[
             PermissionType::ReadApplicationState,
             PermissionType::ChangeApplicationState,
+            PermissionType::RunCommands,
         ]);
         subscribe(&[
             EventType::TabUpdate,
             EventType::PaneUpdate,
             EventType::RunCommandResult,
+            EventType::PermissionRequestResult,
         ]);
-        run_get_home_dir_command();
     }
 
     fn pipe(&mut self, pipe_message: PipeMessage) -> bool {
@@ -99,6 +93,12 @@ impl ZellijPlugin for State {
             Event::PaneUpdate(data) => {
                 self.panes = data;
             }
+            Event::PermissionRequestResult(status) => {
+                self.permissions = Some(status);
+                if status == PermissionStatus::Granted {
+                    self.run_get_home_dir_command();
+                }
+            }
             Event::RunCommandResult(exit_code, stdout, stderr, context) => {
                 if context.get("plugin") != Some(&String::from("tabula"))
                     || context.get("function") != Some(&String::from("get_home_dir"))
@@ -117,12 +117,12 @@ impl ZellijPlugin for State {
                     return false;
                 }
 
-                let Ok(home_dir) = String::from_utf8(stdout) else {
+                let Ok(stdout) = String::from_utf8(stdout) else {
                     eprintln!("Failed to parse stdout of get_home_dir command");
                     return false;
                 };
 
-                let home_dir = PathBuf::from_str(&home_dir).unwrap();
+                let home_dir = PathBuf::from_str(&stdout.trim()).unwrap();
 
                 self.home_dir = Some(home_dir);
             }
@@ -136,11 +136,18 @@ impl ZellijPlugin for State {
 }
 
 impl State {
-    fn organize(&self) {
-        if !self.received_home_dir {
-            run_get_home_dir_command();
+    fn run_get_home_dir_command(&self) {
+        if self.permissions != Some(PermissionStatus::Granted) {
+            return;
         }
 
+        let mut context = BTreeMap::new();
+        context.insert(String::from("plugin"), String::from("tabula"));
+        context.insert(String::from("function"), String::from("get_home_dir"));
+        run_command(&["echo", "$HOME"], context);
+    }
+
+    fn organize(&self) {
         'tab: for tab in &self.tabs {
             let tab_position = tab.position;
 
@@ -215,8 +222,10 @@ impl State {
     }
 
     fn format_dir(&self, dir: &Path) -> String {
-        #[allow(clippy::redundant_pattern_matching)]
-        if let Some(_) = &self.home_dir {
+        dbg!(dir);
+        dbg!(&self.home_dir);
+
+        if &Some(dir.to_path_buf()) == &self.home_dir {
             return String::from("~");
         }
 
