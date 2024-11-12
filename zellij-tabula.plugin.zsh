@@ -1,4 +1,4 @@
-export ZELLIJ_TABULA_ZSH_PLUGIN_VERSION="0.1.0"
+export ZELLIJ_TABULA_ZSH_PLUGIN_VERSION="0.1.1"
 
 chpwd() {
   if [[ -n $ZELLIJ ]]; then
