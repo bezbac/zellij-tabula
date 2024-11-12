@@ -1,6 +1,8 @@
 use zellij_tile::prelude::*;
 
 use std::convert::TryFrom;
+use std::path::Path;
+use std::str::FromStr;
 use std::{collections::BTreeMap, path::PathBuf};
 
 #[derive(Default)]
@@ -16,6 +18,12 @@ struct State {
 
     /// Maps pane id to the working dir open in the pane
     pane_working_dirs: BTreeMap<u32, PathBuf>,
+
+    /// The home directory of the user
+    home_dir: Option<PathBuf>,
+
+    // Whether the home directory event was ever received
+    received_home_dir: bool,
 }
 
 register_plugin!(State);
@@ -27,6 +35,13 @@ fn rem_first_and_last(value: &str) -> &str {
     chars.as_str()
 }
 
+fn run_get_home_dir_command() {
+    let mut context = BTreeMap::new();
+    context.insert(String::from("plugin"), String::from("tabula"));
+    context.insert(String::from("function"), String::from("get_home_dir"));
+    run_command(&["echo", "$HOME"], context);
+}
+
 impl ZellijPlugin for State {
     fn load(&mut self, configuration: BTreeMap<String, String>) {
         self.userspace_configuration = configuration;
@@ -34,7 +49,12 @@ impl ZellijPlugin for State {
             PermissionType::ReadApplicationState,
             PermissionType::ChangeApplicationState,
         ]);
-        subscribe(&[EventType::TabUpdate, EventType::PaneUpdate]);
+        subscribe(&[
+            EventType::TabUpdate,
+            EventType::PaneUpdate,
+            EventType::RunCommandResult,
+        ]);
+        run_get_home_dir_command();
     }
 
     fn pipe(&mut self, pipe_message: PipeMessage) -> bool {
@@ -79,6 +99,33 @@ impl ZellijPlugin for State {
             Event::PaneUpdate(data) => {
                 self.panes = data;
             }
+            Event::RunCommandResult(exit_code, stdout, stderr, context) => {
+                if context.get("plugin") != Some(&String::from("tabula"))
+                    || context.get("function") != Some(&String::from("get_home_dir"))
+                {
+                    return false;
+                }
+
+                if exit_code != Some(0) {
+                    eprintln!(
+                        "Failed to get home dir: exit_code: {:?}, stdout: {:?}, stderr: {:?}",
+                        exit_code,
+                        String::from_utf8(stdout),
+                        String::from_utf8(stderr)
+                    );
+
+                    return false;
+                }
+
+                let Ok(home_dir) = String::from_utf8(stdout) else {
+                    eprintln!("Failed to parse stdout of get_home_dir command");
+                    return false;
+                };
+
+                let home_dir = PathBuf::from_str(&home_dir).unwrap();
+
+                self.home_dir = Some(home_dir);
+            }
             _ => (),
         };
 
@@ -90,6 +137,10 @@ impl ZellijPlugin for State {
 
 impl State {
     fn organize(&self) {
+        if !self.received_home_dir {
+            run_get_home_dir_command();
+        }
+
         'tab: for tab in &self.tabs {
             let tab_position = tab.position;
 
@@ -119,7 +170,7 @@ impl State {
                 };
 
                 if working_dirs_in_tab.len() == 1 {
-                    break 'tab_name format!("{}", first_working_dir.display());
+                    break 'tab_name self.format_dir(first_working_dir);
                 }
 
                 // If all working_dirs_in_tab are the same, use that as the tab name
@@ -127,14 +178,10 @@ impl State {
                     .iter()
                     .all(|dir| *dir == first_working_dir)
                 {
-                    match first_working_dir.to_str() {
-                        Some(str) => {
-                            break 'tab_name format!("{}/", str.trim_end_matches('/'));
-                        }
-                        None => {
-                            continue 'tab;
-                        }
-                    }
+                    break 'tab_name format!(
+                        "{}/",
+                        self.format_dir(first_working_dir).trim_end_matches('/')
+                    );
                 }
 
                 // Get the common directory of all entries in working_dirs_in_tab
@@ -150,14 +197,11 @@ impl State {
                     }
                 }
 
-                let common_dir_str = match common_dir.to_str() {
-                    Some(str) => str.trim_end_matches('/'),
-                    None => {
-                        continue 'tab;
-                    }
-                };
-
-                format!("{}/* ({} panes)", common_dir_str, panes.len())
+                format!(
+                    "{}/* ({} panes)",
+                    self.format_dir(&common_dir).trim_end_matches('/'),
+                    panes.len()
+                )
             };
 
             if self.tabs[tab_position].name == tab_name {
@@ -168,5 +212,14 @@ impl State {
                 rename_tab(tab_position + 1, tab_name);
             }
         }
+    }
+
+    fn format_dir(&self, dir: &Path) -> String {
+        #[allow(clippy::redundant_pattern_matching)]
+        if let Some(_) = &self.home_dir {
+            return String::from("~");
+        }
+
+        format!("{}", dir.display())
     }
 }
