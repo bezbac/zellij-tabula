@@ -165,7 +165,7 @@ impl State {
             }
 
             if let Ok(tab_position) = u32::try_from(tab_position) {
-                rename_tab(tab_position, tab_name);
+                rename_tab(tab_position + 1, tab_name);
             }
         }
     }
