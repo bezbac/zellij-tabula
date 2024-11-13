@@ -4,6 +4,11 @@ use std::convert::TryFrom;
 use std::path::Path;
 use std::{collections::BTreeMap, path::PathBuf};
 
+#[derive(Debug)]
+struct PathMetadata {
+    git_worktree_root: PathBuf,
+}
+
 #[derive(Default)]
 struct State {
     /// The configuration passed to the plugin from zellij
@@ -17,6 +22,12 @@ struct State {
 
     /// Maps pane id to the working dir open in the pane
     pane_working_dirs: BTreeMap<u32, PathBuf>,
+
+    /// Whether the plugin has the necessary permissions
+    permissions: Option<PermissionStatus>,
+
+    /// Metadata about paths
+    path_metadata: BTreeMap<PathBuf, PathMetadata>,
 }
 
 register_plugin!(State);
@@ -34,8 +45,14 @@ impl ZellijPlugin for State {
         request_permission(&[
             PermissionType::ReadApplicationState,
             PermissionType::ChangeApplicationState,
+            PermissionType::RunCommands,
         ]);
-        subscribe(&[EventType::TabUpdate, EventType::PaneUpdate]);
+        subscribe(&[
+            EventType::TabUpdate,
+            EventType::PaneUpdate,
+            EventType::PermissionRequestResult,
+            EventType::RunCommandResult,
+        ]);
     }
 
     fn pipe(&mut self, pipe_message: PipeMessage) -> bool {
@@ -80,6 +97,57 @@ impl ZellijPlugin for State {
             Event::PaneUpdate(data) => {
                 self.panes = data;
             }
+            Event::PermissionRequestResult(status) => {
+                self.permissions = Some(status);
+            }
+            Event::RunCommandResult(exit_code, stdout, stderr, context) => {
+                if context.get("plugin") != Some(&String::from("tabula")) {
+                    return false;
+                }
+
+                let Some(fn_name) = context.get("fn") else {
+                    eprintln!("Expected fn in context, got none");
+                    return false;
+                };
+
+                if exit_code != Some(0) {
+                    eprintln!(
+                        "Failed to run {}: exit_code: {:?}, stdout: {:?}, stderr: {:?}",
+                        fn_name,
+                        exit_code,
+                        String::from_utf8(stdout),
+                        String::from_utf8(stderr)
+                    );
+
+                    return false;
+                }
+
+                let Ok(stdout) = String::from_utf8(stdout) else {
+                    eprintln!("Failed to parse stdout for {fn_name}");
+                    return false;
+                };
+
+                let stdout = stdout.trim();
+
+                if fn_name != "get_git_worktree_root" {
+                    eprintln!("Unexpected fn: {fn_name}");
+                    return false;
+                }
+
+                let Some(path) = context.get("path") else {
+                    eprintln!("Expected path in context, got none");
+                    return false;
+                };
+
+                let path = PathBuf::from(path);
+
+                let git_worktree_root = PathBuf::from(stdout);
+
+                self.path_metadata
+                    .insert(path, PathMetadata { git_worktree_root });
+
+                self.organize();
+            }
             _ => (),
         };
 
@@ -90,6 +158,27 @@ impl ZellijPlugin for State {
 }
 
 impl State {
+    fn get_git_worktree_root(&self, path: PathBuf) -> Option<PathBuf> {
+        if let Some(metadata) = self.path_metadata.get(&path) {
+            Some(metadata.git_worktree_root.clone())
+        } else {
+            if let Some(PermissionStatus::Granted) = self.permissions {
+                let mut context = BTreeMap::new();
+                context.insert(String::from("plugin"), String::from("tabula"));
+                context.insert(String::from("fn"), String::from("get_git_worktree_root"));
+                context.insert(String::from("path"), String::from(path.to_string_lossy()));
+                run_command_with_env_variables_and_cwd(
+                    &["git", "rev-parse", "--show-toplevel"],
+                    BTreeMap::new(),
+                    path,
+                    context,
+                );
+            }
+
+            None
+        }
+    }
+
     fn organize(&self) {
         'tab: for tab in &self.tabs {
             let tab_position = tab.position;
@@ -165,12 +254,26 @@ impl State {
     }
 
     fn format_path(&self, path: &Path) -> String {
-        let mut result = format!("{}", path.display());
+        let git_root_dir = self.get_git_worktree_root(path.to_path_buf());
+
+        let result = format!("{}", path.display());
+
+        if let Some(git_root_dir) = git_root_dir {
+            if let Some(git_root_dir_str) = git_root_dir.to_str() {
+                if path.starts_with(git_root_dir_str) {
+                    if let Some(git_root_basename) = git_root_dir.file_name() {
+                        if let Some(git_root_basename) = git_root_basename.to_str() {
+                            return result.replacen(git_root_dir_str, git_root_basename, 1);
+                        }
+                    }
+                }
+            }
+        }
 
         if let Some(home_dir) = self.userspace_configuration.get("home_dir") {
             let home_dir = home_dir.trim_end_matches('/');
             if path.starts_with(home_dir) {
-                result = format!("~{}", result.trim_start_matches(home_dir));
+                return format!("~{}", result.trim_start_matches(home_dir));
             }
         }
 
