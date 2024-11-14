@@ -1,6 +1,6 @@
 [package]
 name = "zellij-tabula"
-version = "0.1.1"
+version = "0.2.0"
 authors = ["Ben Bachem <10088265+bezbac@users.noreply.github.com>"]
 edition = "2018"
 

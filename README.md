@@ -18,7 +18,7 @@ Add the following to your [zellij config](https://zellij.dev/documentation/confi
 
 ```kdl
 load_plugins {
-    "https://github.com/bezbac/zellij-tabula/releases/download/v0.1.1/zellij-tabula.wasm" {
+    "https://github.com/bezbac/zellij-tabula/releases/download/v0.2.0/zellij-tabula.wasm" {
         home_dir "YOUR_HOME_DIRECTORY"
     }
 }
@@ -35,7 +35,7 @@ Add the following to your sheldon [plugins.toml](https://github.com/rossmacarthu
 [plugins.zellij-tabula]
 github = "bezbac/zellij-tabula"
 use = ["{{ name }}.plugin.zsh"]
-tag = "v0.1.1"
+tag = "v0.2.0"
 ```
 
 </details>
