@@ -1,37 +1,52 @@
-## Development
+# zellij-tabula
 
-_Note_: you will need to have `wasm32-wasi` added to rust as a target to build the plugin. This can be done with `rustup target add wasm32-wasi`.
+A [Zellij](https://zellij.dev) plugin to automatically rename tabs based on the working directory of the contained panes.
 
-_Note_: The dev zellij layout assumes you have the following in your zshrc: (see https://superuser.com/a/230090 for explanation)
+### 🚧 Disclaimer
 
-```
-if [[ $1 == eval ]]
-then
-    "$@"
-set --
-fi
-```
+This project is currently under development and may be subject to frequent changes. Features may be added, modified, or removed without notice. Please use at your own risk and feel free to submit any feedback or suggestions. Thank you for your understanding.
 
-## Inside Zellij
+## Installation
 
-You can load the `./plugin-dev-workspace.kdl` file as a Zellij layout to get a terminal development environment:
+zellij-tabula requires both a zellij-plugin _and_ a shell plugin to function. As of right now, only zsh is supported.
 
-Either when starting Zellij:
+**Requires Zellij `0.40.0` or never**.
 
-```
-zellij --layout ./plugin-dev-workspace.kdl
-```
+### Installing the Zellij plugin
 
-_Note that in this case there's a small bug where the plugin is opened twice, it can be remedied by closing the oldest instance or loading with the new-tab action as secified below - this will be addressed in the near future_
+Add the following to your [zellij config](https://zellij.dev/documentation/configuration.html), replacing `YOUR_HOME_DIRECTORY` with the absolute path of your home directory:
 
-Or from a running Zellij session:
-
-```bash
-zellij action new-tab --layout ./plugin-dev-workspace.kdl
+```kdl
+load_plugins {
+    "https://github.com/bezbac/zellij-tabula/releases/download/v0.1.1/zellij-tabula.wasm" {
+        home_dir "YOUR_HOME_DIRECTORY"
+    }
+}
 ```
 
-## Otherwise
+### Installing the zsh plugin
 
-1. Build the project: `cargo build` inside the `./zellij` directory
-2. Load it inside a running Zellij session: `zellij action start-or-reload-plugin file:target/wasm32-wasi/debug/rust-plugin-example.wasm`
-3. Repeat on changes (perhaps with a `watchexec` or similar command to run on fs changes).
+<details>
+  <summary>Using <a href="https://github.com/rossmacarthur/sheldon" target="_blank">sheldon</a></summary>
+
+Add the following to your sheldon [plugins.toml](https://github.com/rossmacarthur/sheldon?tab=readme-ov-file#%EF%B8%8F-configuration) config:
+
+```toml
+[plugins.zellij-tabula]
+github = "bezbac/zellij-tabula"
+use = ["{{ name }}.plugin.zsh"]
+tag = "v0.1.1"
+```
+
+</details>
+
+Details for more zsh plugin managers will follow. Please [open an issue](https://github.com/bezbac/zellij-tabula/issues/new) for suggesting one.
+
+## Contributing
+
+Feel free to suggest ideas or report issues by [opening an issue](https://github.com/Nacho114/harpoon/issues/new).  
+If you want to contribute code changes you will find some useful information in [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Acknowledgments
+
+This plugin is based on the Zellij's [rust-example-plugin](https://github.com/zellij-org/rust-plugin-example).
