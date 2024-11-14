@@ -47,6 +47,10 @@ Details for more zsh plugin managers will follow. Please [open an issue](https:/
 Feel free to suggest ideas or report issues by [opening an issue](https://github.com/Nacho114/harpoon/issues/new).  
 If you want to contribute code changes you will find some useful information in [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## License
+
+The content of this repository is licensed under the BSD-3-Clause license. See the [LICENSE](LICENSE) file for details.
+
 ## Acknowledgments
 
 This plugin is based on the Zellij's [rust-example-plugin](https://github.com/zellij-org/rust-plugin-example).
