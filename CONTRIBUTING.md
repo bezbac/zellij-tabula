@@ -35,3 +35,11 @@ zellij action new-tab --layout ./plugin-dev-workspace.kdl
 1. Build the project: `cargo build` inside the `./zellij` directory
 2. Load it inside a running Zellij session: `zellij action start-or-reload-plugin file:target/wasm32-wasi/debug/rust-plugin-example.wasm`
 3. Repeat on changes (perhaps with a `watchexec` or similar command to run on fs changes).
+
+## Logging
+
+Logs can be found at `/$temp_dir/zellij-<UID>/zellij-log/zellij.log`.
+
+On mac use `echo $TMPDIR` to find the temp directory.
+
+See the [zellij documentation](https://github.com/zellij-org/zellij/blob/main/CONTRIBUTING.md#debugging--troubleshooting-while-developing) for more details.
