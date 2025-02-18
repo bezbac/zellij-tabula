@@ -97,6 +97,25 @@ impl ZellijPlugin for State {
             Event::PaneUpdate(data) => {
                 self.panes = data;
             }
+            Event::PaneClosed(pane_id_enum) => {
+                let pane_id = match pane_id_enum {
+                    PaneId::Terminal(pane_id) => pane_id,
+                    PaneId::Plugin(pane_id) => pane_id,
+                };
+
+                self.panes.panes = self
+                    .panes
+                    .panes
+                    .clone()
+                    .into_iter()
+                    .map(|(tab_index, panes)| {
+                        (
+                            tab_index,
+                            panes.into_iter().filter(|p| p.id != pane_id).collect(),
+                        )
+                    })
+                    .collect();
+            }
             Event::PermissionRequestResult(status) => {
                 self.permissions = Some(status);
             }
