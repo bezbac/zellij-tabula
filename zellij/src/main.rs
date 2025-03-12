@@ -267,7 +267,16 @@ impl State {
             }
 
             if let Ok(tab_position) = u32::try_from(tab_position) {
-                rename_tab(tab_position + 1, tab_name);
+                // There is an open issue in zellij regarding tab positions not being reported correctly
+                // https://github.com/zellij-org/zellij/issues/3535
+
+                let target_tab_position = if self.tabs.len() > 1 {
+                    tab_position + 1
+                } else {
+                    1
+                };
+
+                rename_tab(target_tab_position, tab_name);
             }
         }
     }
