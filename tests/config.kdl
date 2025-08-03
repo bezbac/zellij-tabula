@@ -1,0 +1,17 @@
+show_startup_tips false
+show_welcome_message false
+show_release_notes false
+
+simplified_ui true
+
+default_shell "zsh"
+
+load_plugins {
+    "file:/zellij-tabula.wasm"
+}
+
+keybinds {
+    normal {
+        bind "." { NewTab; }
+    }
+}
