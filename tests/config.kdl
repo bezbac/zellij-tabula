@@ -7,7 +7,9 @@ simplified_ui true
 default_shell "zsh"
 
 load_plugins {
-    "file:/zellij-tabula.wasm"
+    "file:/zellij-tabula.wasm" {
+        home_dir "/home/alice"
+    }
 }
 
 keybinds {
