@@ -82,4 +82,31 @@ test("renames tab on navigation", async ({ terminal }) => {
   await expect(
     terminal.getByText("Zellij (session)  ~", { full: true }),
   ).toBeVisible();
+
+  terminal.write(
+    "mkdir -p git-project/src/nested && cd git-project && git init -q && cd src/nested",
+  );
+  terminal.write("\r");
+
+  await expect(
+    terminal.getByText("~/git-project/src/nested $", { full: true }),
+  ).toBeVisible();
+
+  await expect(
+    terminal.getByText("Zellij (session)  git-project/src/nested", {
+      full: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    terminal.getByText("Zellij (session)  ~/git-project/src/nested", {
+      full: true,
+    }),
+  ).not.toBeVisible();
+
+  terminal.write("cd ../..");
+  terminal.write("\r");
+
+  await expect(
+    terminal.getByText("Zellij (session)  git-project", { full: true }),
+  ).toBeVisible();
 });

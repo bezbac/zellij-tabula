@@ -5,6 +5,9 @@ RUN apt update
 # Install curl
 RUN apt install curl -y
 
+# Install git
+RUN apt install git -y
+
 # Install Node.js and npm
 RUN apt install -y nodejs npm
 
