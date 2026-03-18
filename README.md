@@ -20,6 +20,10 @@ Add the following to your [zellij config](https://zellij.dev/documentation/confi
 load_plugins {
     "https://github.com/bezbac/zellij-tabula/releases/download/v0.2.0/zellij-tabula.wasm" {
         home_dir "YOUR_HOME_DIRECTORY"
+        // Workaround for https://github.com/zellij-org/zellij/issues/3535
+        // Disable only if you explicitly want old position-based rename targeting.
+        // Defaults to defaults to `true` if omitted.
+        use_stable_tab_ids "true"
     }
 }
 ```
