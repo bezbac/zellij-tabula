@@ -9,11 +9,6 @@ default_shell "zsh"
 load_plugins {
     "file:/zellij-tabula.wasm" {
         home_dir "/home/alice"
-    }
-}
-
-keybinds {
-    normal {
-        bind "." { NewTab; }
+        use_stable_tab_ids "true"
     }
 }

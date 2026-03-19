@@ -1,10 +1,14 @@
 import { test, expect } from "@microsoft/tui-test";
+import {
+  waitFor,
+  expectViewToContain,
+  expectViewNotToContain,
+  maybeApprovePermissions,
+} from "./test-utils.js";
 
 test.use({ program: { file: "/bin/zsh" } });
 
-function waitFor(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+const sessionName = "example-session";
 
 test("renames tab on navigation", async ({ terminal }) => {
   await expect(
@@ -33,23 +37,15 @@ test("renames tab on navigation", async ({ terminal }) => {
   terminal.write("ls");
   terminal.write("\r");
 
-  terminal.write("zellij attach -c session");
+  terminal.write(`zellij attach -c ${sessionName}`);
   terminal.write("\r");
 
   await expect(terminal.getByText("Pane #1", { full: true })).toBeVisible();
   await expect(
-    terminal.getByText("Zellij (session)  Tab #1", { full: true }),
+    terminal.getByText(`Zellij (${sessionName})  Tab #1`, { full: true }),
   ).toBeVisible();
 
-  await expect(
-    terminal.getByText("Plugin /zellij-tabula.wasm asks", { full: true }),
-  ).toBeVisible();
-
-  terminal.write("y");
-
-  await expect(
-    terminal.getByText("Plugin /zellij-tabula.wasm asks", { full: true }),
-  ).not.toBeVisible();
+  await maybeApprovePermissions(terminal);
 
   await expect(
     terminal.getByText("Using config /home/alice/.zshrc", { full: true }),
@@ -64,10 +60,10 @@ test("renames tab on navigation", async ({ terminal }) => {
 
   await expect(terminal.getByText("Pane #1", { full: true })).toBeVisible();
   await expect(
-    terminal.getByText("Zellij (session)  Tab #1", { full: true }),
+    terminal.getByText(`Zellij (${sessionName})  Tab #1`, { full: true }),
   ).not.toBeVisible();
   await expect(
-    terminal.getByText("Zellij (session)  ~/test1", { full: true }),
+    terminal.getByText(`Zellij (${sessionName})  ~/test1`, { full: true }),
   ).toBeVisible();
 
   terminal.write("cd ~");
@@ -77,36 +73,36 @@ test("renames tab on navigation", async ({ terminal }) => {
 
   await expect(terminal.getByText("Pane #1", { full: true })).toBeVisible();
   await expect(
-    terminal.getByText("Zellij (session)  ~/test1", { full: true }),
+    terminal.getByText(`Zellij (${sessionName})  ~/test1`, { full: true }),
   ).not.toBeVisible();
   await expect(
-    terminal.getByText("Zellij (session)  ~", { full: true }),
+    terminal.getByText(`Zellij (${sessionName})  ~`, { full: true }),
   ).toBeVisible();
 
-  terminal.write(
-    "mkdir -p git-project/src/nested && cd git-project && git init -q && cd src/nested",
-  );
+  terminal.write("mkdir -p git-project/src/nested");
+  terminal.write("\r");
+  terminal.write("cd git-project");
+  terminal.write("\r");
+  terminal.write("git init -q");
+  terminal.write("\r");
+  terminal.write("cd src/nested");
   terminal.write("\r");
 
   await expect(
     terminal.getByText("~/git-project/src/nested $", { full: true }),
   ).toBeVisible();
 
-  await expect(
-    terminal.getByText("Zellij (session)  git-project/src/nested", {
-      full: true,
-    }),
-  ).toBeVisible();
-  await expect(
-    terminal.getByText("Zellij (session)  ~/git-project/src/nested", {
-      full: true,
-    }),
-  ).not.toBeVisible();
+  await expectViewToContain(
+    terminal,
+    `Zellij (${sessionName})  git-project/src/nested`,
+  );
+  await expectViewNotToContain(
+    terminal,
+    `Zellij (${sessionName})  ~/git-project/src/nested`,
+  );
 
   terminal.write("cd ../..");
   terminal.write("\r");
 
-  await expect(
-    terminal.getByText("Zellij (session)  git-project", { full: true }),
-  ).toBeVisible();
+  await expectViewToContain(terminal, `Zellij (${sessionName})  git-project`);
 });

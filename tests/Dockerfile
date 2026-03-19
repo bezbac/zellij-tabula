@@ -37,6 +37,7 @@ RUN chown alice:alice /home/alice/.zshrc
 # Install npm dependencies for tests
 WORKDIR /tests
 COPY ./tests/package.json ./package.json
+COPY ./tests/tui-test.config.js ./tui-test.config.js
 RUN npm install
 
 # Configure zellij
@@ -45,7 +46,11 @@ COPY ./tests/config.kdl /home/alice/.config/zellij/config.kdl
 RUN chown -R alice:alice /home/alice/.config
 
 # Copy tests
-COPY ./tests/example.test.js ./example.test.js
+COPY ./tests/package.json ./package.json
+COPY ./tests/tui-test.config.js ./tui-test.config.js
+COPY ./tests/main.test.js ./main.test.js
+COPY ./tests/stable-id.test.js ./stable-id.test.js
+COPY ./tests/test-utils.js ./test-utils.js
 RUN chown -R alice:alice /tests
 
 USER alice
