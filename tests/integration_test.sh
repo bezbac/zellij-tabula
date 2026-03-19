@@ -11,4 +11,7 @@ cd ..
 docker build -t zellij:test -f ./tests/Dockerfile .
 
 # Run the expect script inside the docker container
-docker run --rm -v ./tests/__snapshots__:/tests/__snapshots__ -v ./tests/package.json:/tests/package.json -v ./tests/example.test.js:/tests/example.test.js -t zellij:test
+docker run --rm -v ./tests/__snapshots__:/tests/__snapshots__ -t zellij:test
+
+# Delete the docker image after the test is done
+docker rmi zellij:test

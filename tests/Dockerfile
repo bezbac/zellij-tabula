@@ -45,7 +45,10 @@ COPY ./tests/config.kdl /home/alice/.config/zellij/config.kdl
 RUN chown -R alice:alice /home/alice/.config
 
 # Copy tests
-COPY ./tests/example.test.js ./example.test.js
+COPY ./tests/package.json ./package.json
+COPY ./tests/main.test.js ./main.test.js
+COPY ./tests/stable-id.test.js ./stable-id.test.js
+COPY ./tests/test-utils.js ./test-utils.js
 RUN chown -R alice:alice /tests
 
 USER alice
