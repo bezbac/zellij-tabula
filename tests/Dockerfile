@@ -49,6 +49,7 @@ RUN chown -R alice:alice /home/alice/.config
 COPY ./tests/package.json ./package.json
 COPY ./tests/tui-test.config.js ./tui-test.config.js
 COPY ./tests/main.test.js ./main.test.js
+COPY ./tests/session-rename.test.js ./session-rename.test.js
 COPY ./tests/stable-id.test.js ./stable-id.test.js
 COPY ./tests/test-utils.js ./test-utils.js
 RUN chown -R alice:alice /tests
