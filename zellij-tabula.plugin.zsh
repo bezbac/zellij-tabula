@@ -1,4 +1,4 @@
-export ZELLIJ_TABULA_ZSH_PLUGIN_VERSION="0.2.0"
+export ZELLIJ_TABULA_ZSH_PLUGIN_VERSION="0.3.0"
 
 zellij() {
   command zellij "$@"
