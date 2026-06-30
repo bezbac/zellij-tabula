@@ -9,6 +9,5 @@ default_shell "zsh"
 load_plugins {
     "file:/zellij-tabula.wasm" {
         home_dir "/home/alice"
-        use_stable_tab_ids "true"
     }
 }

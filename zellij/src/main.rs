@@ -9,6 +9,7 @@ struct PathMetadata {
     git_worktree_root: PathBuf,
 }
 
+#[derive(Default)]
 struct State {
     /// The configuration passed to the plugin from zellij
     userspace_configuration: BTreeMap<String, String>,
@@ -27,45 +28,9 @@ struct State {
 
     /// Metadata about paths
     path_metadata: BTreeMap<PathBuf, PathMetadata>,
-
-    /// Whether the stable tab-id workaround is enabled.
-    ///
-    /// Upstream issue:
-    /// - <https://github.com/zellij-org/zellij/issues/3535>
-    ///
-    /// Background:
-    /// Zellij's plugin action for tab rename currently targets internal tab
-    /// indices, while plugin state exposes tab positions. After tab closes,
-    /// these can diverge, and position-based rename calls can hit the wrong tab.
-    use_stable_tab_ids: bool,
-
-    /// Maps pane id to tab position (0-indexed), used to maintain stable tab ids
-    pane_to_tab_position: BTreeMap<u32, usize>,
-
-    /// Maps pane id to a synthetic stable tab id for `rename_tab()`.
-    ///
-    /// This is a local workaround for zellij-org/zellij#3535 in downstream
-    /// plugins until upstream behavior is fixed.
-    pane_to_stable_tab_id: BTreeMap<u32, u32>,
 }
 
 register_plugin!(State);
-
-impl Default for State {
-    fn default() -> Self {
-        Self {
-            userspace_configuration: BTreeMap::new(),
-            tabs: vec![],
-            panes: PaneManifest::default(),
-            pane_working_dirs: BTreeMap::new(),
-            permissions: None,
-            path_metadata: BTreeMap::new(),
-            use_stable_tab_ids: true,
-            pane_to_tab_position: BTreeMap::new(),
-            pane_to_stable_tab_id: BTreeMap::new(),
-        }
-    }
-}
 
 fn rem_first_and_last(value: &str) -> &str {
     let mut chars = value.chars();
@@ -74,41 +39,9 @@ fn rem_first_and_last(value: &str) -> &str {
     chars.as_str()
 }
 
-fn parse_bool(value: &str) -> Option<bool> {
-    let value = value.trim();
-    if value.eq_ignore_ascii_case("true")
-        || value.eq_ignore_ascii_case("yes")
-        || value.eq_ignore_ascii_case("on")
-        || value == "1"
-    {
-        return Some(true);
-    }
-
-    if value.eq_ignore_ascii_case("false")
-        || value.eq_ignore_ascii_case("no")
-        || value.eq_ignore_ascii_case("off")
-        || value == "0"
-    {
-        return Some(false);
-    }
-
-    None
-}
-
 impl ZellijPlugin for State {
     fn load(&mut self, configuration: BTreeMap<String, String>) {
         self.userspace_configuration = configuration;
-        self.use_stable_tab_ids = self
-            .userspace_configuration
-            .get("use_stable_tab_ids")
-            .map_or(true, |value| {
-                parse_bool(value).unwrap_or_else(|| {
-                    eprintln!(
-                        "Invalid value for use_stable_tab_ids: {value:?}. Falling back to true."
-                    );
-                    true
-                })
-            });
         request_permission(&[
             PermissionType::ReadApplicationState,
             PermissionType::ChangeApplicationState,
@@ -152,7 +85,6 @@ impl ZellijPlugin for State {
         self.pane_working_dirs
             .insert(pane_id, pwd.to_string().into());
 
-        self.rebuild_stable_tab_ids();
         self.organize();
 
         false
@@ -162,11 +94,9 @@ impl ZellijPlugin for State {
         match event {
             Event::TabUpdate(tab_info) => {
                 self.tabs = tab_info;
-                self.rebuild_stable_tab_ids();
             }
             Event::PaneUpdate(data) => {
                 self.panes = data;
-                self.rebuild_stable_tab_ids();
             }
             Event::PaneClosed(pane_id_enum) => {
                 let pane_id = match pane_id_enum {
@@ -187,7 +117,6 @@ impl ZellijPlugin for State {
                     .collect();
 
                 self.pane_working_dirs.remove(&pane_id);
-                self.rebuild_stable_tab_ids();
             }
             Event::PermissionRequestResult(status) => {
                 self.permissions = Some(status);
@@ -280,117 +209,6 @@ impl State {
         reported_pane_id
     }
 
-    fn rebuild_stable_tab_ids(&mut self) {
-        let mut current_pane_to_tab_position = BTreeMap::new();
-
-        for tab in &self.tabs {
-            if let Some(pane_list) = self.panes.panes.get(&tab.position) {
-                for pane in pane_list {
-                    if !pane.is_plugin && !pane.is_suppressed {
-                        current_pane_to_tab_position.insert(pane.id, tab.position);
-                    }
-                }
-            }
-        }
-
-        if !self.use_stable_tab_ids {
-            self.pane_to_tab_position = current_pane_to_tab_position;
-            return;
-        }
-
-        // WORKAROUND for https://github.com/zellij-org/zellij/issues/3535:
-        // Track our own stable tab ids by pinning panes in the same tab to the
-        // same synthetic id, then use that id for rename_tab() targets.
-        //
-        // The plugin API exposes tab positions, but rename_tab() effectively
-        // behaves like it expects stable internal indices.
-
-        // If pane ids change, transfer the stable id from the deleted pane
-        // to the new pane that appeared in the same tab position.
-        let mut new_panes_by_position: BTreeMap<usize, Vec<u32>> = BTreeMap::new();
-        for (&pane_id, &tab_position) in &current_pane_to_tab_position {
-            if !self.pane_to_stable_tab_id.contains_key(&pane_id) {
-                new_panes_by_position
-                    .entry(tab_position)
-                    .or_default()
-                    .push(pane_id);
-            }
-        }
-
-        for (old_pane_id, old_tab_position) in &self.pane_to_tab_position {
-            if current_pane_to_tab_position.contains_key(old_pane_id) {
-                continue;
-            }
-
-            let Some(stable_id) = self.pane_to_stable_tab_id.get(old_pane_id).copied() else {
-                continue;
-            };
-
-            if let Some(new_panes) = new_panes_by_position.get_mut(old_tab_position) {
-                if let Some(new_pane_id) = new_panes.pop() {
-                    self.pane_to_stable_tab_id.insert(new_pane_id, stable_id);
-                }
-            }
-        }
-
-        // Remove stale pane ids.
-        self.pane_to_stable_tab_id
-            .retain(|pane_id, _| current_pane_to_tab_position.contains_key(pane_id));
-
-        // Ensure all panes in a tab share the same stable id.
-        for tab in &self.tabs {
-            let Some(pane_list) = self.panes.panes.get(&tab.position) else {
-                continue;
-            };
-
-            let pane_ids_in_tab: Vec<u32> = pane_list
-                .iter()
-                .filter(|pane| !pane.is_plugin && !pane.is_suppressed)
-                .map(|pane| pane.id)
-                .collect();
-
-            if pane_ids_in_tab.is_empty() {
-                continue;
-            }
-
-            let stable_id = pane_ids_in_tab
-                .iter()
-                .find_map(|pane_id| self.pane_to_stable_tab_id.get(pane_id).copied())
-                .unwrap_or_else(|| {
-                    self.pane_to_stable_tab_id
-                        .values()
-                        .copied()
-                        .max()
-                        .unwrap_or(0)
-                        + 1
-                });
-
-            for pane_id in pane_ids_in_tab {
-                self.pane_to_stable_tab_id.insert(pane_id, stable_id);
-            }
-        }
-
-        self.pane_to_tab_position = current_pane_to_tab_position;
-    }
-
-    fn rename_target_for_tab(&self, tab_position: usize, panes: &[PaneInfo]) -> Option<u32> {
-        if self.use_stable_tab_ids {
-            // WORKAROUND mode:
-            // resolve tab target through our synthetic stable id map
-            // (see zellij-org/zellij#3535).
-            panes
-                .iter()
-                .find_map(|pane| self.pane_to_stable_tab_id.get(&pane.id).copied())
-        } else {
-            // Legacy mode:
-            // use the tab position directly (1-indexed), which can mis-target
-            // tabs after tab closures because of zellij-org/zellij#3535.
-            u32::try_from(tab_position)
-                .ok()
-                .map(|position| position + 1)
-        }
-    }
-
     fn get_git_worktree_root(&self, path: PathBuf) -> Option<PathBuf> {
         if let Some(metadata) = self.path_metadata.get(&path) {
             Some(metadata.git_worktree_root.clone())
@@ -480,11 +298,11 @@ impl State {
                 continue;
             }
 
-            let Some(rename_target) = self.rename_target_for_tab(tab_position, &panes) else {
+            let Some(rename_target) = u64::try_from(tab.tab_id).ok() else {
                 continue;
             };
 
-            rename_tab(rename_target, tab_name);
+            rename_tab_with_id(rename_target, tab_name);
         }
     }
 
