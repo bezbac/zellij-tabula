@@ -5,7 +5,7 @@
 arch=$(uname -m)
 
 filename="zellij-${arch}-unknown-linux-musl.tar.gz"
-url="https://github.com/zellij-org/zellij/releases/latest/download/$filename"
+url="https://github.com/zellij-org/zellij/releases/download/v0.44.3/$filename"
 echo "Downloading Zellij binary for Linux..."
 curl -LO "$url"
 
