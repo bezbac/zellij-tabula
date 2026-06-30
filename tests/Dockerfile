@@ -23,10 +23,6 @@ RUN chmod +x /install_zellij.sh
 RUN /install_zellij.sh
 RUN rm /install_zellij.sh
 
-# Install zellij-tabula plugin
-COPY ./zellij/target/wasm32-wasip1/release/zellij-tabula.wasm /zellij-tabula.wasm
-COPY ./zellij-tabula.plugin.zsh /zellij-tabula.plugin.zsh
-
 # Configure zsh
 RUN touch /home/alice/.zshrc
 RUN echo "PS1='%F%B%~%b%f %F$ %f'" >> /home/alice/.zshrc
@@ -37,22 +33,10 @@ RUN chown alice:alice /home/alice/.zshrc
 # Install npm dependencies for tests
 WORKDIR /tests
 COPY ./tests/package.json ./package.json
-COPY ./tests/tui-test.config.js ./tui-test.config.js
 RUN npm install
 
-# Configure zellij
+# Configure zellij (mount target dirs must exist)
 RUN mkdir -p /home/alice/.config/zellij
-COPY ./tests/config.kdl /home/alice/.config/zellij/config.kdl
-RUN chown -R alice:alice /home/alice/.config
-
-# Copy tests
-COPY ./tests/package.json ./package.json
-COPY ./tests/tui-test.config.js ./tui-test.config.js
-COPY ./tests/main.test.js ./main.test.js
-COPY ./tests/session-rename.test.js ./session-rename.test.js
-COPY ./tests/stable-id.test.js ./stable-id.test.js
-COPY ./tests/test-utils.js ./test-utils.js
-RUN chown -R alice:alice /tests
 
 USER alice
 
