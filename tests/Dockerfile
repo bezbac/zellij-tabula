@@ -24,7 +24,7 @@ RUN /install_zellij.sh
 RUN rm /install_zellij.sh
 
 # Install zellij-tabula plugin
-COPY ./zellij/target/wasm32-wasi/release/zellij-tabula.wasm /zellij-tabula.wasm
+COPY ./zellij/target/wasm32-wasip1/release/zellij-tabula.wasm /zellij-tabula.wasm
 COPY ./zellij-tabula.plugin.zsh /zellij-tabula.plugin.zsh
 
 # Configure zsh

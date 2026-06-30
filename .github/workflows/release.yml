@@ -22,10 +22,10 @@ jobs:
           fetch-depth: 0
 
       - name: Install rust toolchain
-        uses: dtolnay/rust-toolchain@1.82.0
+        uses: dtolnay/rust-toolchain@1.96.1
         with:
           components: rustfmt, clippy
-          targets: wasm32-wasi
+          targets: wasm32-wasip1
 
       - name: Build
         run: cargo build --release
@@ -53,5 +53,5 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            zellij/target/wasm32-wasi/release/zellij-tabula.wasm
+            zellij/target/wasm32-wasip1/release/zellij-tabula.wasm
             zellij-tabula.plugin.zsh

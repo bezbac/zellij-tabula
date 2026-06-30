@@ -170,7 +170,7 @@ impl ZellijPlugin for State {
                 self.organize();
             }
             _ => (),
-        };
+        }
 
         false
     }
