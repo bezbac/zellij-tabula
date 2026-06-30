@@ -50,6 +50,7 @@ impl ZellijPlugin for State {
         subscribe(&[
             EventType::TabUpdate,
             EventType::PaneUpdate,
+            EventType::PaneClosed,
             EventType::PermissionRequestResult,
             EventType::RunCommandResult,
         ]);
@@ -117,6 +118,8 @@ impl ZellijPlugin for State {
                     .collect();
 
                 self.pane_working_dirs.remove(&pane_id);
+
+                self.organize();
             }
             Event::PermissionRequestResult(status) => {
                 self.permissions = Some(status);
