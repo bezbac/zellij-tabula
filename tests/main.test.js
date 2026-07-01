@@ -1,6 +1,5 @@
 import { test, expect } from "@microsoft/tui-test";
 import {
-  waitFor,
   expectViewToContain,
   expectViewNotToContain,
   maybeApprovePermissions,
@@ -68,8 +67,6 @@ test("renames tab on navigation", async ({ terminal }) => {
 
   terminal.write("cd ~");
   terminal.write("\r");
-
-  await waitFor(1000);
 
   await expect(terminal.getByText("Pane #1", { full: true })).toBeVisible();
   await expect(

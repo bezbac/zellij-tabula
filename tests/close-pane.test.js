@@ -1,7 +1,6 @@
 import { test, expect } from "@microsoft/tui-test";
 import {
   writeLine,
-  waitFor,
   expectViewToContain,
   expectViewNotToContain,
   maybeApprovePermissions,
@@ -42,7 +41,7 @@ test("renames tab when closing a pane", async ({ terminal }) => {
 
   // Create a second pane.
   writeLine(terminal, "zellij action new-pane");
-  await waitFor(2000);
+  await expectViewToContain(terminal, "Pane #2", 5000);
   await expect(terminal.getByText("~ $", { strict: false })).toBeVisible();
 
   // Navigate pane 2 to shared/xyz — now both working dirs are known and
@@ -58,7 +57,7 @@ test("renames tab when closing a pane", async ({ terminal }) => {
 
   // Close pane 2 by exiting its shell.
   writeLine(terminal, "exit");
-  await waitFor(2000);
+  await expectViewNotToContain(terminal, "Pane #2", 5000);
   await expect(
     terminal.getByText("~/shared/abc $", { strict: false }),
   ).toBeVisible();
