@@ -44,7 +44,7 @@ Details for more zsh plugin managers will follow. Please [open an issue](https:/
 
 ## Contributing
 
-Feel free to suggest ideas or report issues by [opening an issue](https://github.com/Nacho114/harpoon/issues/new).  
+Feel free to suggest ideas or report issues by [opening an issue](https://github.com/bezbac/zellij-tabula/issues/new).  
 If you want to contribute code changes you will find some useful information in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
