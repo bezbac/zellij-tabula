@@ -4,9 +4,10 @@ use std::convert::TryFrom;
 use std::path::Path;
 use std::{collections::BTreeMap, path::PathBuf};
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct PathMetadata {
     git_worktree_root: PathBuf,
+    repo_name: String,
 }
 
 #[derive(Default)]
@@ -153,7 +154,7 @@ impl ZellijPlugin for State {
 
                 let stdout = stdout.trim();
 
-                if fn_name != "get_git_worktree_root" {
+                if fn_name != "get_git_path_metadata" {
                     eprintln!("Unexpected fn: {fn_name}");
                     return false;
                 }
@@ -165,10 +166,42 @@ impl ZellijPlugin for State {
 
                 let path = PathBuf::from(path);
 
-                let git_worktree_root = PathBuf::from(stdout);
+                let mut stdout_lines = stdout.lines();
 
-                self.path_metadata
-                    .insert(path, PathMetadata { git_worktree_root });
+                let Some(git_worktree_root) = stdout_lines.next().map(PathBuf::from) else {
+                    eprintln!("Expected git worktree root for {fn_name}");
+                    return false;
+                };
+
+                let Some(git_common_dir) = stdout_lines.next().map(PathBuf::from) else {
+                    eprintln!("Expected git common dir for {fn_name}");
+                    return false;
+                };
+
+                let fallback_repo_name = git_worktree_root
+                    .file_name()
+                    .and_then(|repo_name| repo_name.to_str())
+                    .map(str::to_owned);
+
+                let repo_name = git_common_dir
+                    .parent()
+                    .and_then(|repo_dir| repo_dir.file_name())
+                    .and_then(|repo_name| repo_name.to_str())
+                    .map(str::to_owned)
+                    .or(fallback_repo_name);
+
+                let Some(repo_name) = repo_name else {
+                    eprintln!("Expected repo name for {fn_name}");
+                    return false;
+                };
+
+                self.path_metadata.insert(
+                    path,
+                    PathMetadata {
+                        git_worktree_root,
+                        repo_name,
+                    },
+                );
 
                 self.organize();
             }
@@ -212,17 +245,23 @@ impl State {
         reported_pane_id
     }
 
-    fn get_git_worktree_root(&self, path: PathBuf) -> Option<PathBuf> {
+    fn get_git_path_metadata(&self, path: PathBuf) -> Option<PathMetadata> {
         if let Some(metadata) = self.path_metadata.get(&path) {
-            Some(metadata.git_worktree_root.clone())
+            Some(metadata.clone())
         } else {
             if let Some(PermissionStatus::Granted) = self.permissions {
                 let mut context = BTreeMap::new();
                 context.insert(String::from("plugin"), String::from("tabula"));
-                context.insert(String::from("fn"), String::from("get_git_worktree_root"));
+                context.insert(String::from("fn"), String::from("get_git_path_metadata"));
                 context.insert(String::from("path"), String::from(path.to_string_lossy()));
                 run_command_with_env_variables_and_cwd(
-                    &["git", "rev-parse", "--show-toplevel"],
+                    &[
+                        "git",
+                        "rev-parse",
+                        "--path-format=absolute",
+                        "--show-toplevel",
+                        "--git-common-dir",
+                    ],
                     BTreeMap::new(),
                     path,
                     context,
@@ -310,18 +349,14 @@ impl State {
     }
 
     fn format_path(&self, path: &Path) -> String {
-        let git_root_dir = self.get_git_worktree_root(path.to_path_buf());
+        let git_metadata = self.get_git_path_metadata(path.to_path_buf());
 
         let result = format!("{}", path.display());
 
-        if let Some(git_root_dir) = git_root_dir {
-            if let Some(git_root_dir_str) = git_root_dir.to_str() {
+        if let Some(git_metadata) = git_metadata {
+            if let Some(git_root_dir_str) = git_metadata.git_worktree_root.to_str() {
                 if path.starts_with(git_root_dir_str) {
-                    if let Some(git_root_basename) = git_root_dir.file_name() {
-                        if let Some(git_root_basename) = git_root_basename.to_str() {
-                            return result.replacen(git_root_dir_str, git_root_basename, 1);
-                        }
-                    }
+                    return result.replacen(git_root_dir_str, &git_metadata.repo_name, 1);
                 }
             }
         }

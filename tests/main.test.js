@@ -102,4 +102,32 @@ test("renames tab on navigation", async ({ terminal }) => {
   terminal.write("\r");
 
   await expectViewToContain(terminal, `Zellij (${sessionName})  git-project`);
+
+  terminal.write("git config user.email test@example.com");
+  terminal.write("\r");
+  terminal.write("git config user.name 'Tabula Test'");
+  terminal.write("\r");
+  terminal.write("touch src/nested/.keep");
+  terminal.write("\r");
+  terminal.write("git add .");
+  terminal.write("\r");
+  terminal.write("git commit -qm init");
+  terminal.write("\r");
+  terminal.write("git worktree add -q ../git-project-worktree -b worktree-test");
+  terminal.write("\r");
+  terminal.write("cd ../git-project-worktree/src/nested");
+  terminal.write("\r");
+
+  await expect(
+    terminal.getByText("~/git-project-worktree/src/nested $", { full: true }),
+  ).toBeVisible();
+
+  await expectViewToContain(
+    terminal,
+    `Zellij (${sessionName})  git-project/src/nested`,
+  );
+  await expectViewNotToContain(
+    terminal,
+    `Zellij (${sessionName})  git-project-worktree/src/nested`,
+  );
 });
