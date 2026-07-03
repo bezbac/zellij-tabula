@@ -124,10 +124,18 @@ test("renames tab on navigation", async ({ terminal }) => {
 
   await expectViewToContain(
     terminal,
-    `Zellij (${sessionName})  git-project/src/nested`,
+    `Zellij (${sessionName})  git-project/src/nested (🌲 git-projec...)`,
   );
   await expectViewNotToContain(
     terminal,
     `Zellij (${sessionName})  git-project-worktree/src/nested`,
+  );
+
+  terminal.write("cd ../..");
+  terminal.write("\r");
+
+  await expectViewToContain(
+    terminal,
+    `Zellij (${sessionName})  git-project (🌲 git-projec...)`,
   );
 });

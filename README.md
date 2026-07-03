@@ -20,6 +20,8 @@ Add the following to your [zellij config](https://zellij.dev/documentation/confi
 load_plugins {
     "https://github.com/bezbac/zellij-tabula/releases/download/v0.4.0/zellij-tabula.wasm" {
         home_dir "YOUR_HOME_DIRECTORY"
+        worktree_name_display "repo_and_worktree"
+        worktree_name_preview_length "10"
     }
 }
 ```
@@ -41,6 +43,35 @@ tag = "v0.4.0"
 </details>
 
 Details for more zsh plugin managers will follow. Please [open an issue](https://github.com/bezbac/zellij-tabula/issues/new) for suggesting one.
+
+## Configuration
+
+### `home_dir`
+
+Absolute path to your home directory. This is used to shorten non-git paths to `~`.
+
+### `worktree_name_display`
+
+Controls how linked git worktrees are displayed.
+
+- `repo_and_worktree`: `repo/src (🌲 feature-branch...)`
+- `worktree_only`: `feature-branch/src`
+
+The default is `repo_and_worktree`.
+
+### `worktree_name_preview_length`
+
+Controls truncation of the displayed worktree name when `worktree_name_display` is `repo_and_worktree`.
+
+- `0` or omitted: show the full worktree name
+- positive integer: show the first `N` characters and append `...` only when truncation happens
+
+`worktree_name_preview_length` appends `...` only when truncation happens.
+
+Examples:
+
+- `worktree_name_display "repo_and_worktree"` with `worktree_name_preview_length "10"` => `repo/src (🌲 feature-bra...)`
+- `worktree_name_display "worktree_only"` ignores `worktree_name_preview_length` => `feature-branch/src`
 
 ## Contributing
 

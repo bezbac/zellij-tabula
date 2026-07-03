@@ -9,5 +9,7 @@ default_shell "zsh"
 load_plugins {
     "file:/zellij-tabula.wasm" {
         home_dir "/home/alice"
+        worktree_name_display "repo_and_worktree"
+        worktree_name_preview_length "10"
     }
 }
