@@ -94,6 +94,12 @@ Set the current pane's status to `waiting`:
 zellij pipe --name tabula -- "status '${ZELLIJ_PANE_ID}' 'waiting'"
 ```
 
+## Integrations
+
+- **[opencode](https://opencode.ai)** — see [`integrations/opencode/`](./integrations/opencode/) for a plugin that shows a waiting indicator when opencode requests permission.
+
+Missing your favorite tool? [Suggest an integration](https://github.com/bezbac/zellij-tabula/issues/new?title=Integration+request+[tool+name])
+
 ## Contributing
 
 Feel free to suggest ideas or report issues by [opening an issue](https://github.com/bezbac/zellij-tabula/issues/new).  
