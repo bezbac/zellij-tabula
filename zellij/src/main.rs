@@ -18,6 +18,13 @@ enum WorktreeNameDisplay {
     WorktreeOnly,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum PaneStatus {
+    #[default]
+    None,
+    Waiting,
+}
+
 fn format_path(state: &State, path: &Path, path_suffix: &str) -> String {
     let git_metadata = state.get_git_path_metadata(path.to_path_buf());
 
@@ -102,6 +109,9 @@ struct State {
     /// Maps pane id to the working dir open in the pane
     pane_working_dirs: BTreeMap<u32, PathBuf>,
 
+    /// Maps pane id to its current status.
+    pane_statuses: BTreeMap<u32, PaneStatus>,
+
     /// Whether the plugin has the necessary permissions
     permissions: Option<PermissionStatus>,
 
@@ -116,6 +126,14 @@ fn rem_first_and_last(value: &str) -> &str {
     chars.next();
     chars.next_back();
     chars.as_str()
+}
+
+fn parse_pane_status(value: &str) -> Option<PaneStatus> {
+    match value {
+        "none" => Some(PaneStatus::None),
+        "waiting" => Some(PaneStatus::Waiting),
+        _ => None,
+    }
 }
 
 impl ZellijPlugin for State {
@@ -146,6 +164,36 @@ impl ZellijPlugin for State {
             eprintln!("Expected payload, got none");
             return false;
         };
+
+        if payload.starts_with("status ") {
+            let parts: Vec<&str> = payload.split(' ').collect();
+
+            if parts.len() != 3 {
+                eprintln!(
+                    "Expected exactly 3 parts for status update, got {}",
+                    parts.len()
+                );
+                return false;
+            }
+
+            let Ok(reported_pane_id) = rem_first_and_last(parts[1]).parse::<u32>() else {
+                eprintln!("Failed to parse pane id: {}", parts[1]);
+                return false;
+            };
+
+            let Some(pane_status) = parse_pane_status(rem_first_and_last(parts[2])) else {
+                let value = rem_first_and_last(parts[2]);
+                eprintln!("Unknown pane status: {value}");
+                return false;
+            };
+
+            let pane_id = self.resolve_pipe_pane_id(reported_pane_id);
+
+            self.pane_statuses.insert(pane_id, pane_status);
+            self.organize();
+
+            return false;
+        }
 
         let parts: Vec<&str> = payload.split(' ').collect();
 
@@ -216,6 +264,7 @@ impl State {
             .collect();
 
         self.pane_working_dirs.remove(&pane_id);
+        self.pane_statuses.remove(&pane_id);
         self.organize();
     }
 
@@ -411,7 +460,7 @@ impl State {
                 continue;
             }
 
-            let tab_name = 'tab_name: {
+            let mut tab_name = 'tab_name: {
                 let Some(first_working_dir) = working_dirs_in_tab.first().copied() else {
                     // If there are no working dirs, skip this tab
                     continue 'tab;
@@ -442,8 +491,19 @@ impl State {
                     }
                 }
 
-                format!("{} ({} panes)", format_path(self, &common_dir, "/*"), panes.len())
+                format!(
+                    "{} ({} panes)",
+                    format_path(self, &common_dir, "/*"),
+                    panes.len()
+                )
             };
+
+            if panes
+                .iter()
+                .any(|pane| self.pane_statuses.get(&pane.id) == Some(&PaneStatus::Waiting))
+            {
+                tab_name = format!("⏳{tab_name}");
+            }
 
             if self.tabs[tab_position].name == tab_name {
                 continue;
@@ -474,7 +534,6 @@ impl State {
             .and_then(|preview_length| preview_length.parse::<usize>().ok())
             .unwrap_or(0)
     }
-
 }
 
 #[cfg(test)]
@@ -542,7 +601,11 @@ mod tests {
         );
 
         assert_eq!(
-            format_path(&state, Path::new("/home/alice/git-project-worktree/src"), ""),
+            format_path(
+                &state,
+                Path::new("/home/alice/git-project-worktree/src"),
+                ""
+            ),
             "git-project/src (🌲 git-projec...)"
         );
     }
@@ -560,7 +623,11 @@ mod tests {
         );
 
         assert_eq!(
-            format_path(&state, Path::new("/home/alice/git-project-worktree/src"), ""),
+            format_path(
+                &state,
+                Path::new("/home/alice/git-project-worktree/src"),
+                ""
+            ),
             "git-project-worktree/src"
         );
     }
@@ -596,8 +663,19 @@ mod tests {
         );
 
         assert_eq!(
-            format_path(&state, Path::new("/home/alice/git-project-worktree/src"), "/*"),
+            format_path(
+                &state,
+                Path::new("/home/alice/git-project-worktree/src"),
+                "/*"
+            ),
             "git-project/src/* (🌲 git-projec...)"
         );
+    }
+
+    #[test]
+    fn parses_pane_status_values() {
+        assert_eq!(parse_pane_status("waiting"), Some(PaneStatus::Waiting));
+        assert_eq!(parse_pane_status("none"), Some(PaneStatus::None));
+        assert_eq!(parse_pane_status("busy"), None);
     }
 }

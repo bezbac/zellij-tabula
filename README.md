@@ -73,6 +73,27 @@ Examples:
 - `worktree_name_display "repo_and_worktree"` with `worktree_name_preview_length "10"` => `repo/src (🌲 feature-bra...)`
 - `worktree_name_display "worktree_only"` ignores `worktree_name_preview_length` => `feature-branch/src`
 
+## Pane Status Tracking
+
+zellij-tabula also supports setting a pane's status via [Zellij pipes](https://zellij.dev/documentation/zellij-pipes). This allows external tools to indicate when a pane is waiting for user input.
+
+### Usage
+
+Send a message to the `tabula` pipe with the format:
+
+```bash
+zellij pipe --name tabula -- "status '<pane_id>' '<status>'"
+```
+
+- `<pane_id>`: The target pane's ID (from `$ZELLIJ_PANE_ID`)
+- `<status>`: Either `waiting` or `none`
+
+Set the current pane's status to `waiting`:
+
+```bash
+zellij pipe --name tabula -- "status '${ZELLIJ_PANE_ID}' 'waiting'"
+```
+
 ## Contributing
 
 Feel free to suggest ideas or report issues by [opening an issue](https://github.com/bezbac/zellij-tabula/issues/new).  

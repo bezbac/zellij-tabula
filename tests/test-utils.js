@@ -53,7 +53,7 @@ export async function pressTabModeKey(terminal, key) {
   terminal.write("\u0014");
   await waitFor(100);
   terminal.write(key);
-  await waitFor(200);
+  await waitFor(300);
 }
 
 export async function expectTabTitle(
