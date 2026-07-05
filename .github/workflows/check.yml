@@ -20,7 +20,7 @@ jobs:
           targets: wasm32-wasip1
 
       - name: Check formatting
-        run: rustfmt --check
+        run: cargo fmt --check
 
       - name: Check clippy
         run: cargo clippy -- -D clippy::all -D clippy::pedantic -A clippy::no_mangle_with_rust_abi
