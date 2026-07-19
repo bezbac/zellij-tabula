@@ -150,6 +150,7 @@ impl ZellijPlugin for State {
             EventType::PaneClosed,
             EventType::PermissionRequestResult,
             EventType::RunCommandResult,
+            EventType::CwdChanged,
         ]);
     }
 
@@ -165,9 +166,9 @@ impl ZellijPlugin for State {
             return false;
         };
 
-        if payload.starts_with("status ") {
-            let parts: Vec<&str> = payload.split(' ').collect();
+        let parts: Vec<&str> = payload.split(' ').collect();
 
+        if payload.starts_with("status ") {
             if parts.len() != 3 {
                 eprintln!(
                     "Expected exactly 3 parts for status update, got {}",
@@ -195,26 +196,6 @@ impl ZellijPlugin for State {
             return false;
         }
 
-        let parts: Vec<&str> = payload.split(' ').collect();
-
-        if parts.len() != 2 {
-            eprintln!("Expected exactly 2 parts, got {}", parts.len());
-            return false;
-        }
-
-        let Ok(reported_pane_id) = rem_first_and_last(parts[0]).parse::<u32>() else {
-            eprintln!("Failed to parse pane id: {}", parts[0]);
-            return false;
-        };
-
-        let pwd = rem_first_and_last(parts[1]);
-        let pane_id = self.resolve_pipe_pane_id(reported_pane_id);
-
-        self.pane_working_dirs
-            .insert(pane_id, pwd.to_string().into());
-
-        self.organize();
-
         false
     }
 
@@ -228,6 +209,13 @@ impl ZellijPlugin for State {
             }
             Event::PaneClosed(pane_id_enum) => {
                 self.handle_pane_closed(pane_id_enum);
+            }
+            Event::CwdChanged(pane_id_enum, cwd, _) => {
+                let pane_id = match pane_id_enum {
+                    PaneId::Terminal(id) | PaneId::Plugin(id) => id,
+                };
+                self.pane_working_dirs.insert(pane_id, cwd);
+                self.organize();
             }
             Event::PermissionRequestResult(status) => {
                 self.permissions = Some(status);
