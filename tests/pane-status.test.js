@@ -39,12 +39,12 @@ test("prefixes tab titles when a pane is waiting", async ({ terminal }) => {
     terminal,
     "zellij pipe --name tabula -- \"status '$ZELLIJ_PANE_ID' 'waiting'\"",
   );
-  await expectViewToContain(terminal, `Zellij (${sessionName})  ⏳ ~/${targetDir}`);
+  await expectViewToContain(terminal, `Zellij (${sessionName})  ⏳~/${targetDir}`);
 
   writeLine(
     terminal,
     "zellij pipe --name tabula -- \"status '$ZELLIJ_PANE_ID' 'none'\"",
   );
   await expectViewToContain(terminal, `Zellij (${sessionName})  ~/${targetDir}`);
-  await expectViewNotToContain(terminal, `Zellij (${sessionName})  ⏳ ~/${targetDir}`);
+  await expectViewNotToContain(terminal, `Zellij (${sessionName})  ⏳~/${targetDir}`);
 });
