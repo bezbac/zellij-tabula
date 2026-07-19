@@ -26,7 +26,6 @@ RUN rm /install_zellij.sh
 # Configure zsh
 RUN touch /home/alice/.zshrc
 RUN echo "PS1='%F%B%~%b%f %F$ %f'" >> /home/alice/.zshrc
-RUN echo 'source /zellij-tabula.plugin.zsh' >> /home/alice/.zshrc
 RUN echo 'echo "Using config /home/alice/.zshrc\n"' >> /home/alice/.zshrc
 RUN chown alice:alice /home/alice/.zshrc
 

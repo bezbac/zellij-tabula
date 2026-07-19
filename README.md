@@ -8,8 +8,6 @@ This project is currently under development and may be subject to frequent chang
 
 ## Installation
 
-zellij-tabula requires both a zellij-plugin _and_ a shell plugin to function. As of right now, only zsh is supported.
-
 **Requires Zellij `0.44.0` or newer**.
 
 ### Installing the Zellij plugin
@@ -25,24 +23,6 @@ load_plugins {
     }
 }
 ```
-
-### Installing the zsh plugin
-
-<details>
-  <summary>Using <a href="https://github.com/rossmacarthur/sheldon" target="_blank">sheldon</a></summary>
-
-Add the following to your sheldon [plugins.toml](https://github.com/rossmacarthur/sheldon?tab=readme-ov-file#%EF%B8%8F-configuration) config:
-
-```toml
-[plugins.zellij-tabula]
-github = "bezbac/zellij-tabula"
-use = ["{{ name }}.plugin.zsh"]
-tag = "v0.4.0"
-```
-
-</details>
-
-Details for more zsh plugin managers will follow. Please [open an issue](https://github.com/bezbac/zellij-tabula/issues/new) for suggesting one.
 
 ## Configuration
 

@@ -54,4 +54,3 @@ jobs:
           prerelease: false
           files: |
             zellij/target/wasm32-wasip1/release/zellij-tabula.wasm
-            zellij-tabula.plugin.zsh
