@@ -16,17 +16,34 @@ for f in "$wasm" "$config" ./tests/package.json; do
   [ -f "$f" ] || { echo "Missing file: $f" >&2; exit 1; }
 done
 
-docker build -t zellij:test -f ./tests/Dockerfile .
+docker build -t zellij:test -f ./tests/Dockerfile . 2>&1 | tail -1
 
-# Run the expect script inside the docker container.
-# ./tests is bind-mounted; an anonymous volume shields /tests/node_modules
-# (baked into the image) so the bind mount doesn't shadow it.
-docker run --rm -t \
-  -v "$wasm":/zellij-tabula.wasm:ro \
-  -v "$config":/home/alice/.config/zellij/config.kdl:ro \
-  -v ./tests:/tests \
-  -v /tests/node_modules \
-  zellij:test
+# Run each test file in its own container to give each a fresh zellij daemon.
+# The CwdChanged event has a known multi-session interaction issue in zellij
+# v0.44.x where panes from prior sessions corrupt tracking for later sessions.
+failed=0
+for test_file in tests/*.test.js; do
+  test_name=$(basename "$test_file")
+  echo "--- $test_name ---"
+  if docker run --rm -t \
+    -v "$wasm":/zellij-tabula.wasm:ro \
+    -v "$config":/home/alice/.config/zellij/config.kdl:ro \
+    -v ./tests:/tests \
+    -v /tests/node_modules \
+    --entrypoint ./node_modules/.bin/tui-test \
+    zellij:test \
+    "$test_file"; then
+    echo "PASS: $test_name"
+  else
+    echo "FAIL: $test_name"
+    failed=$((failed + 1))
+  fi
+done
 
-# Delete the docker image after the test is done
-docker rmi zellij:test
+docker rmi zellij:test 2>/dev/null || true
+
+if [ "$failed" -gt 0 ]; then
+  echo "$failed test(s) failed"
+  exit 1
+fi
+echo "All tests passed"
