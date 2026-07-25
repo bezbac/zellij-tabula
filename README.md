@@ -16,7 +16,7 @@ Add the following to your [zellij config](https://zellij.dev/documentation/confi
 
 ```kdl
 load_plugins {
-    "https://github.com/bezbac/zellij-tabula/releases/download/v0.4.0/zellij-tabula.wasm" {
+    "https://github.com/bezbac/zellij-tabula/releases/download/v0.5.0/zellij-tabula.wasm" {
         home_dir "YOUR_HOME_DIRECTORY"
         worktree_name_display "repo_and_worktree"
         worktree_name_preview_length "10"
