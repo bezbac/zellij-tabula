@@ -14,12 +14,13 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 type TestFn = fn() -> Result<()>;
 
 fn main() {
-    let tests: [(&str, TestFn); 5] = [
+    let tests: [(&str, TestFn); 6] = [
         ("renames tab on navigation", main_tab_rename),
         ("prefixes tab titles when a pane is waiting", pane_status),
         ("renames tab when closing a pane", close_pane),
         ("handles auto tab names after closing tabs", stable_id),
         ("names tabs by initial working directory", seed_tab_names),
+        ("applies configured rewrites to tab names", rewrites),
     ];
 
     let mut failures = 0;
@@ -310,6 +311,58 @@ fn seed_tab_names() -> Result<()> {
     close_focused_tab(&mut t)?;
     expect_tab_bar(&mut t, &session, &["~".to_string()], D8)?;
     expect_view_not_to_contain(&mut t, &format!("~/{second}"), D2)?;
+    Ok(())
+}
+
+fn rewrites() -> Result<()> {
+    let mut t = spawn_zsh()?;
+    let session = format!("rewrites-session-{}", unique_suffix());
+
+    expect_full_text_to_contain(&mut t, "Using config /home/alice/.zshrc", D5)?;
+
+    write_line(&mut t, "cd")?;
+    expect_view_to_contain(&mut t, "~ $", D5)?;
+
+    write_line(&mut t, &format!("zellij attach -c {session}"))?;
+    expect_full_text_to_contain(&mut t, "Pane #1", D10)?;
+    expect_full_text_to_contain(&mut t, "Using config /home/alice/.zshrc", D5)?;
+    expect_view_to_contain(&mut t, "~ $", D5)?;
+
+    dismiss_startup_dialog(&mut t)?;
+    wait_for_plugin_load(&mut t)?;
+
+    // A git repo named `zellij-tabula` makes the `repo` rewrite apply.
+    write_line(&mut t, "mkdir -p zellij-tabula/worktrees/feature")?;
+    write_line(&mut t, "cd zellij-tabula")?;
+    write_line(&mut t, "git init -q")?;
+    write_line(&mut t, "git config user.email test@example.com")?;
+    write_line(&mut t, "git config user.name 'Tabula Test'")?;
+    write_line(&mut t, "touch worktrees/feature/.keep")?;
+    write_line(&mut t, "git add .")?;
+    write_line(&mut t, "git commit -qm init")?;
+
+    // `repo` rewrites the git-root basename: `zellij-tabula` -> `zt`.
+    // `segment` rewrites each path segment: `worktrees` -> `wt`.
+    write_line(&mut t, "cd worktrees")?;
+    expect_tab_bar_to_contain(&mut t, "zt/wt", D8)?;
+    expect_tab_bar_not_to_contain(&mut t, "zellij-tabula", D2)?;
+
+    // `path` rewrites the entire final tab name: `REWRITE_PATH` -> `RP`.
+    write_line(&mut t, "mkdir -p ../REWRITE_PATH")?;
+    write_line(&mut t, "cd ../REWRITE_PATH")?;
+    expect_tab_bar_to_contain(&mut t, "zt/RP", D8)?;
+
+    // The repo root shows just the rewritten repo name.
+    write_line(&mut t, "cd ..")?;
+    expect_tab_bar_to_contain(&mut t, "zt", D8)?;
+
+    // `worktree` rewrites the linked worktree name: `rewrite-worktree` -> `rw`.
+    write_line(
+        &mut t,
+        "git worktree add -q ../rewrite-worktree -b rewrite-branch",
+    )?;
+    write_line(&mut t, "cd ../rewrite-worktree")?;
+    expect_tab_bar_to_contain(&mut t, "zt (\u{1F332} rw)", D8)?;
     Ok(())
 }
 

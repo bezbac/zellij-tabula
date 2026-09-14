@@ -53,6 +53,30 @@ Examples:
 - `worktree_name_display "repo_and_worktree"` with `worktree_name_preview_length "10"` => `repo/src (🌲 feature-bra...)`
 - `worktree_name_display "worktree_only"` ignores `worktree_name_preview_length` => `feature-branch/src`
 
+### `rewrites`
+
+The plugin accepts a `rewrites` block to customize how tab names are rendered. Each entry is a regex pattern applied to a specific path element:
+
+```kdl
+load_plugins {
+    "https://github.com/bezbac/zellij-tabula/releases/download/v0.5.0/zellij-tabula.wasm" {
+        home_dir "YOUR_HOME_DIRECTORY"
+        rewrites {
+            worktree "feature/(.*)" "$1"
+            repo "zellij-tabula" "zt"
+            segment "customizability" "cust"
+            path "^(.*)/src$" "$1"
+        }
+    }
+}
+```
+
+- `worktree` — applies only when the path is inside a **linked git worktree**, to the worktree name.
+- `repo` — applies to the git-root basename, which is always shown first.
+- `segment` — applies to every individual path segment.
+- `path` — applies to the entire final tab name.
+- Rules use Rust [`regex`](https://docs.rs/regex) syntax (e.g. capture groups as `$1`, `$name`). Multiple rules per target apply in order.
+
 ## Pane Status Tracking
 
 zellij-tabula also supports setting a pane's status via [Zellij pipes](https://zellij.dev/documentation/zellij-pipes). This allows external tools to indicate when a pane is waiting for user input.

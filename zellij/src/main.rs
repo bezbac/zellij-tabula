@@ -1,7 +1,9 @@
 use zellij_tile::prelude::*;
 
+use regex::Regex;
 use std::convert::TryFrom;
 use std::path::Path;
+use std::str::FromStr;
 use std::{collections::BTreeMap, path::PathBuf};
 
 #[derive(Clone, Debug)]
@@ -39,6 +41,114 @@ struct SeedOutcome {
     pending: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RewriteTarget {
+    /// Applies to the linked worktree name, shown after the repo path (e.g. `(🌲 worktree)`).
+    Worktree,
+    /// Applies to the git-root basename, which is always shown first.
+    Repo,
+    /// Applies to every individual path segment.
+    Segment,
+    /// Applies to the entire final tab name.
+    Path,
+}
+
+impl RewriteTarget {
+    fn try_from_name(name: &str) -> Result<RewriteTarget, ParseRewriteError> {
+        match name {
+            "worktree" => Ok(Self::Worktree),
+            "repo" => Ok(Self::Repo),
+            "segment" => Ok(Self::Segment),
+            "path" => Ok(Self::Path),
+            other => Err(ParseRewriteError::UnknownTarget(other.to_string())),
+        }
+    }
+}
+
+struct Rewrite {
+    target: RewriteTarget,
+    pattern: Regex,
+    replacement: String,
+}
+
+#[derive(Debug)]
+enum ParseRewriteError {
+    UnknownTarget(String),
+    ArgCount {
+        target: RewriteTarget,
+        expected: usize,
+        got: usize,
+    },
+    MissingPattern(RewriteTarget),
+    MissingReplacement(RewriteTarget),
+    InvalidRegex {
+        target: RewriteTarget,
+        pattern: String,
+    },
+}
+
+impl std::fmt::Display for ParseRewriteError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnknownTarget(name) => write!(f, "Unknown rewrite target: {name}"),
+            Self::ArgCount {
+                target,
+                expected,
+                got,
+            } => write!(
+                f,
+                "Expected {expected} arguments (pattern, replacement) for {target:?}, got {got}"
+            ),
+            Self::MissingPattern(target) => write!(f, "Expected string pattern for {target:?}"),
+            Self::MissingReplacement(target) => {
+                write!(f, "Expected string replacement for {target:?}")
+            }
+            Self::InvalidRegex { target, pattern } => {
+                write!(f, "Invalid regex for {target:?}: {pattern}")
+            }
+        }
+    }
+}
+
+impl Rewrite {
+    fn try_from_kdl_node(node: &kdl::KdlNode) -> Result<Rewrite, ParseRewriteError> {
+        let name = node.name().to_string();
+
+        let target = RewriteTarget::try_from_name(&name)?;
+
+        let entries = node.entries();
+
+        if entries.len() != 2 {
+            return Err(ParseRewriteError::ArgCount {
+                target,
+                expected: 2,
+                got: entries.len(),
+            });
+        }
+
+        let Some(pattern) = entries[0].value().as_string() else {
+            return Err(ParseRewriteError::MissingPattern(target));
+        };
+
+        let Some(replacement) = entries[1].value().as_string() else {
+            return Err(ParseRewriteError::MissingReplacement(target));
+        };
+
+        let Ok(pattern) = Regex::new(pattern) else {
+            return Err(ParseRewriteError::InvalidRegex {
+                target,
+                pattern: pattern.to_string(),
+            });
+        };
+
+        Ok(Rewrite {
+            target,
+            pattern,
+            replacement: replacement.to_string(),
+        })
+    }
+}
+
 fn format_path(state: &State, path: &Path, path_suffix: &str) -> String {
     let git_metadata = state.get_git_path_metadata(path.to_path_buf());
 
@@ -48,51 +158,134 @@ fn format_path(state: &State, path: &Path, path_suffix: &str) -> String {
         if let Ok(relative_path) = path.strip_prefix(&git_metadata.git_worktree_root) {
             let is_linked_worktree = git_metadata.worktree_name != git_metadata.repo_name;
 
+            let repo_name = apply_rewrites(
+                &git_metadata.repo_name,
+                RewriteTarget::Repo,
+                &state.rewrites,
+            );
+
             if is_linked_worktree {
                 match state.worktree_name_display() {
                     WorktreeNameDisplay::RepoAndWorktree => {
-                        let worktree_name = truncate_with_ellipsis(
+                        let worktree_name = apply_rewrites(
                             &git_metadata.worktree_name,
+                            RewriteTarget::Worktree,
+                            &state.rewrites,
+                        );
+                        let worktree_name = truncate_with_ellipsis(
+                            &worktree_name,
                             state.worktree_name_preview_length(),
                         );
                         let path = if relative_path.as_os_str().is_empty() {
-                            git_metadata.repo_name.clone()
+                            repo_name.clone()
                         } else {
-                            format!("{}/{}", git_metadata.repo_name, relative_path.display())
+                            format!("{repo_name}/{}", relative_path.display())
                         };
+                        let path = apply_segment_rewrites(&path, &state.rewrites);
 
-                        return format!("{path}{path_suffix} (🌲 {worktree_name})");
+                        return apply_path_rewrites(
+                            &format!("{path}{path_suffix} (🌲 {worktree_name})"),
+                            &state.rewrites,
+                        );
                     }
                     WorktreeNameDisplay::WorktreeOnly => {
+                        let worktree_name = apply_rewrites(
+                            &git_metadata.worktree_name,
+                            RewriteTarget::Worktree,
+                            &state.rewrites,
+                        );
                         let path = if relative_path.as_os_str().is_empty() {
-                            git_metadata.worktree_name.clone()
+                            worktree_name.clone()
                         } else {
-                            format!("{}/{}", git_metadata.worktree_name, relative_path.display())
+                            format!("{worktree_name}/{}", relative_path.display())
                         };
+                        let path = apply_segment_rewrites(&path, &state.rewrites);
 
-                        return format!("{path}{path_suffix}");
+                        return apply_path_rewrites(
+                            &format!("{path}{path_suffix}"),
+                            &state.rewrites,
+                        );
                     }
                 }
             }
 
             let path = if relative_path.as_os_str().is_empty() {
-                git_metadata.repo_name.clone()
+                repo_name.clone()
             } else {
-                format!("{}/{}", git_metadata.repo_name, relative_path.display())
+                format!("{repo_name}/{}", relative_path.display())
             };
+            let path = apply_segment_rewrites(&path, &state.rewrites);
 
-            return format!("{path}{path_suffix}");
+            return apply_path_rewrites(&format!("{path}{path_suffix}"), &state.rewrites);
         }
     }
 
     if let Some(home_dir) = state.userspace_configuration.get("home_dir") {
         let home_dir = home_dir.trim_end_matches('/');
         if path.starts_with(home_dir) {
-            return format!("~{}{}", result.trim_start_matches(home_dir), path_suffix);
+            let name = format!("~{}{}", result.trim_start_matches(home_dir), path_suffix);
+            return apply_path_rewrites(&name, &state.rewrites);
         }
     }
 
-    format!("{result}{path_suffix}")
+    apply_path_rewrites(&format!("{result}{path_suffix}"), &state.rewrites)
+}
+
+fn apply_rewrites(name: &str, target: RewriteTarget, rewrites: &[Rewrite]) -> String {
+    let mut out = name.to_string();
+
+    for rule in rewrites {
+        if rule.target == target {
+            out = rule
+                .pattern
+                .replace_all(&out, rule.replacement.as_str())
+                .into_owned();
+        }
+    }
+
+    out
+}
+
+fn apply_segment_rewrites(name: &str, rewrites: &[Rewrite]) -> String {
+    let segment_rules: Vec<&Rewrite> = rewrites
+        .iter()
+        .filter(|rule| rule.target == RewriteTarget::Segment)
+        .collect();
+
+    if segment_rules.is_empty() {
+        return name.to_string();
+    }
+
+    name.split('/')
+        .map(|segment| {
+            let mut rewritten = segment.to_string();
+
+            for rule in &segment_rules {
+                rewritten = rule
+                    .pattern
+                    .replace_all(&rewritten, rule.replacement.as_str())
+                    .into_owned();
+            }
+
+            rewritten
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn apply_path_rewrites(name: &str, rewrites: &[Rewrite]) -> String {
+    let mut out = name.to_string();
+
+    for rule in rewrites {
+        if rule.target == RewriteTarget::Path {
+            out = rule
+                .pattern
+                .replace_all(&out, rule.replacement.as_str())
+                .into_owned();
+        }
+    }
+
+    out
 }
 
 fn truncate_with_ellipsis(value: &str, preview_length: usize) -> String {
@@ -113,6 +306,9 @@ fn truncate_with_ellipsis(value: &str, preview_length: usize) -> String {
 struct State {
     /// The configuration passed to the plugin from zellij
     userspace_configuration: BTreeMap<String, String>,
+
+    /// User-defined string rewrites, parsed from the `rewrites` config block
+    rewrites: Vec<Rewrite>,
 
     /// The tabs currently open in the terminal, set by the `TabUpdate` event
     tabs: Vec<TabInfo>,
@@ -158,6 +354,7 @@ fn parse_pane_status(value: &str) -> Option<PaneStatus> {
 
 impl ZellijPlugin for State {
     fn load(&mut self, configuration: BTreeMap<String, String>) {
+        self.rewrites = parse_rewrites(&configuration);
         self.userspace_configuration = configuration;
         request_permission(&[
             PermissionType::ReadApplicationState,
@@ -745,4 +942,26 @@ mod tests {
         assert_eq!(parse_pane_status("none"), Some(PaneStatus::None));
         assert_eq!(parse_pane_status("busy"), None);
     }
+}
+
+fn parse_rewrites(configuration: &BTreeMap<String, String>) -> Vec<Rewrite> {
+    let Some(raw) = configuration.get("rewrites") else {
+        return Vec::new();
+    };
+
+    let Ok(document) = kdl::KdlDocument::from_str(raw) else {
+        eprintln!("Failed to parse rewrites: {raw}");
+        return Vec::new();
+    };
+
+    let mut rewrites = Vec::new();
+
+    for node in document.nodes() {
+        match Rewrite::try_from_kdl_node(node) {
+            Ok(rewrite) => rewrites.push(rewrite),
+            Err(message) => eprintln!("{message}"),
+        }
+    }
+
+    rewrites
 }

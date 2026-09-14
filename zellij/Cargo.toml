@@ -7,3 +7,5 @@ edition = "2018"
 [dependencies]
 zellij-tile = "0.44.0"
 chrono = "0.4.0"
+kdl = "4.7.1"
+regex = "1"
