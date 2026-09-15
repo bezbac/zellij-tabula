@@ -99,20 +99,36 @@ pub fn press_tab_mode_key(
     Ok(())
 }
 
-// zellij only re-sends TabUpdate on a layout change,
-// so force one by creating and immediately closing a new tab.
+// zellij only re-sends TabUpdate on a layout change, so force one by
+// creating and immediately closing a tab. Both commands run in the current
+// shell in a single command line, so the focus switch caused by opening the
+// tab does not matter, and the tab is closed by its stable id.
 pub fn wait_for_plugin_load(t: &mut Terminal) -> Result<(), Error> {
-    press_tab_mode_key(t, 'n', Some("Tab #2"), D5)?;
-    press_tab_mode_key(t, 'x', None, D5)?;
-    expect_view_not_to_contain(t, "Tab #2", Duration::from_secs(2))?;
+    write_line(
+        t,
+        "id=$(zellij action new-tab); zellij action close-tab-by-id \"$id\"; \
+         echo TABULA_REFRESHED",
+    )?;
+    expect_full_text_to_contain(t, "TABULA_REFRESHED", D5)?;
     Ok(())
 }
 
-pub fn expect_tab_title(
+// Assert against the tab bar (the first screen row) only, so that a tab
+// title that also appears in a shell prompt cannot satisfy the check.
+pub fn expect_tab_bar_to_contain(
     t: &mut Terminal,
     expected: &str,
-    session: &str,
     timeout: Duration,
 ) -> Result<(), Error> {
-    expect_view_to_contain(t, &format!("Zellij ({session})  {expected}"), timeout)
+    t.wait_until_for(|s| s.row_text(0).contains(expected), timeout)?;
+    Ok(())
+}
+
+pub fn expect_tab_bar_not_to_contain(
+    t: &mut Terminal,
+    unexpected: &str,
+    timeout: Duration,
+) -> Result<(), Error> {
+    t.wait_until_for(|s| !s.row_text(0).contains(unexpected), timeout)?;
+    Ok(())
 }

@@ -4,8 +4,9 @@ use std::time::Duration;
 use termlens::Terminal;
 use test_utils::{
     dismiss_startup_dialog, expect_full_text_not_to_contain, expect_full_text_to_contain,
-    expect_tab_title, expect_view_not_to_contain, expect_view_to_contain, press_tab_mode_key,
-    spawn_zsh, unique_suffix, wait_for_plugin_load, write_line, D10, D2, D5, D8,
+    expect_tab_bar_not_to_contain, expect_tab_bar_to_contain, expect_view_not_to_contain,
+    expect_view_to_contain, press_tab_mode_key, spawn_zsh, unique_suffix, wait_for_plugin_load,
+    write_line, D10, D2, D5, D8,
 };
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -13,11 +14,12 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 type TestFn = fn() -> Result<()>;
 
 fn main() {
-    let tests: [(&str, TestFn); 4] = [
+    let tests: [(&str, TestFn); 5] = [
         ("renames tab on navigation", main_tab_rename),
         ("prefixes tab titles when a pane is waiting", pane_status),
         ("renames tab when closing a pane", close_pane),
         ("handles auto tab names after closing tabs", stable_id),
+        ("names tabs by initial working directory", seed_tab_names),
     ];
 
     let mut failures = 0;
@@ -243,9 +245,13 @@ fn expect_tab_bar(
     Ok(())
 }
 
-fn new_tab(t: &mut Terminal, tab_number: u32) -> Result<()> {
-    let label = format!("Tab #{tab_number}");
-    press_tab_mode_key(t, 'n', Some(&label), D5)?;
+fn open_tab_in_dir(t: &mut Terminal, dir: &str) -> Result<()> {
+    // zellij 0.44 ignores --cwd unless an initial command is supplied.
+    write_line(
+        t,
+        &format!("zellij action new-tab --cwd /home/alice/{dir} -- /bin/zsh"),
+    )?;
+    expect_view_to_contain(t, &format!("~/{dir} $"), D5)?;
     Ok(())
 }
 
@@ -260,20 +266,16 @@ fn close_focused_tab(t: &mut Terminal) -> Result<()> {
     Ok(())
 }
 
-fn cd_into_tab_name_dir(t: &mut Terminal, tab_name: &str) -> Result<()> {
-    write_line(t, &format!("cd ~/{tab_name}"))?;
-    expect_view_to_contain(t, &format!("~/{tab_name} $"), D5)?;
+fn cd_into_dir(t: &mut Terminal, dir: &str) -> Result<()> {
+    write_line(t, &format!("cd ~/{dir}"))?;
+    expect_view_to_contain(t, &format!("~/{dir} $"), D5)?;
     Ok(())
 }
 
-fn stable_id() -> Result<()> {
+fn seed_tab_names() -> Result<()> {
     let mut t = spawn_zsh()?;
-    let session = format!("stable-id-session-{}", unique_suffix());
-
+    let session = format!("seed-tab-names-session-{}", unique_suffix());
     let second = "second";
-    let third = "third";
-    let fourth = "fourth";
-    let fifth = "fifth";
 
     expect_full_text_to_contain(&mut t, "Using config /home/alice/.zshrc", D5)?;
 
@@ -285,92 +287,86 @@ fn stable_id() -> Result<()> {
     expect_full_text_to_contain(&mut t, "Using config /home/alice/.zshrc", D5)?;
     expect_view_to_contain(&mut t, "~ $", D5)?;
 
+    dismiss_startup_dialog(&mut t)?;
+    wait_for_plugin_load(&mut t)?;
+
+    write_line(&mut t, &format!("mkdir -p \"{second}\""))?;
+
+    // A pane that never changes directory still names its tab from its
+    // initial working directory.
+    expect_tab_bar(&mut t, &session, &["~".to_string()], D8)?;
+
+    // A new tab opened in a custom directory is named from that directory,
+    // even though its pane keeps the working directory it was created with.
+    open_tab_in_dir(&mut t, second)?;
+    expect_tab_bar(
+        &mut t,
+        &session,
+        &["~".to_string(), format!("~/{second}")],
+        D8,
+    )?;
+
+    // Closing the tab removes its name from the tab bar.
+    close_focused_tab(&mut t)?;
+    expect_tab_bar(&mut t, &session, &["~".to_string()], D8)?;
+    expect_view_not_to_contain(&mut t, &format!("~/{second}"), D2)?;
+    Ok(())
+}
+
+fn stable_id() -> Result<()> {
+    let mut t = spawn_zsh()?;
+    let session = format!("stable-id-session-{}", unique_suffix());
+
+    let second = "second";
+    let third = "third";
+    let fourth = "fourth";
+    let fifth = "fifth";
+    let renamed = "renamed";
+
+    expect_full_text_to_contain(&mut t, "Using config /home/alice/.zshrc", D5)?;
+
+    write_line(&mut t, "cd")?;
+    expect_view_to_contain(&mut t, "~ $", D5)?;
+
+    write_line(&mut t, &format!("zellij attach -c {session}"))?;
+    expect_full_text_to_contain(&mut t, "Pane #1", D10)?;
+    expect_full_text_to_contain(&mut t, "Using config /home/alice/.zshrc", D5)?;
+    expect_view_to_contain(&mut t, "~ $", D5)?;
+
+    dismiss_startup_dialog(&mut t)?;
+    wait_for_plugin_load(&mut t)?;
+
     write_line(
         &mut t,
         &format!("mkdir -p \"{second}\" \"{third}\" \"{fourth}\" \"{fifth}\""),
     )?;
-    expect_tab_title(&mut t, "Tab #1", &session, D8)?;
 
-    dismiss_startup_dialog(&mut t)?;
-
-    for tab_count in 1..6 {
-        new_tab(&mut t, tab_count + 1)?;
+    // Each new tab starts in its own directory, so the plugin seeds a
+    // unique tab name for it.
+    for dir in [second, third, fourth, fifth] {
+        open_tab_in_dir(&mut t, dir)?;
     }
-    expect_view_to_contain(&mut t, "\u{2190} +3  Tab #4  Tab #5  Tab #6", D8)?;
+    expect_tab_bar_to_contain(&mut t, &format!("~/{fifth}"), D8)?;
 
-    // Name tab #2 by entering ~/second.
+    // Deleting the focused (fifth) tab leaves the fourth tab focused, and
+    // its seeded name intact.
+    close_focused_tab(&mut t)?;
+    expect_tab_bar_to_contain(&mut t, &format!("~/{fourth}"), D8)?;
+
+    // Deleting the focused (fourth) tab leaves the third tab focused and named.
+    close_focused_tab(&mut t)?;
+    expect_tab_bar_to_contain(&mut t, &format!("~/{third}"), D8)?;
+
+    // The surviving ~/third tab is now the visible third tab. Renaming it
+    // must not affect the ~/second tab next to it.
+    go_to_tab(&mut t, 3)?;
+    write_line(&mut t, &format!("mkdir ~/{renamed}"))?;
+    cd_into_dir(&mut t, renamed)?;
+    expect_tab_bar_to_contain(&mut t, &format!("~/{renamed}"), D8)?;
+    expect_tab_bar_not_to_contain(&mut t, &format!("~/{third}"), D2)?;
+
+    // The second tab kept its own seeded name.
     go_to_tab(&mut t, 2)?;
-    cd_into_tab_name_dir(&mut t, second)?;
-    expect_view_to_contain(&mut t, &format!("Tab #1  ~/{second}  Tab #3"), D8)?;
-    expect_view_to_contain(&mut t, "+3", D8)?;
-
-    // Delete the visible third tab twice.
-    go_to_tab(&mut t, 3)?;
-    close_focused_tab(&mut t)?;
-    expect_view_to_contain(&mut t, &format!("Tab #1  ~/{second}  Tab #4"), D8)?;
-    expect_view_to_contain(&mut t, "+2", D8)?;
-    expect_view_not_to_contain(&mut t, "Tab #3", D2)?;
-
-    go_to_tab(&mut t, 3)?;
-    close_focused_tab(&mut t)?;
-    expect_tab_bar(
-        &mut t,
-        &session,
-        &[
-            "Tab #1".to_string(),
-            format!("~/{second}"),
-            "Tab #5".to_string(),
-            "Tab #6".to_string(),
-        ],
-        D8,
-    )?;
-    expect_view_not_to_contain(&mut t, "Tab #4", D2)?;
-
-    // The old fifth tab is now visible tab #3, so entering ~/third should name it.
-    go_to_tab(&mut t, 3)?;
-    cd_into_tab_name_dir(&mut t, third)?;
-    expect_tab_bar(
-        &mut t,
-        &session,
-        &[
-            "Tab #1".to_string(),
-            format!("~/{second}"),
-            format!("~/{third}"),
-            "Tab #6".to_string(),
-        ],
-        D8,
-    )?;
-
-    // The old sixth tab is now visible tab #4, so entering ~/fourth should name it.
-    go_to_tab(&mut t, 4)?;
-    cd_into_tab_name_dir(&mut t, fourth)?;
-    expect_tab_bar(
-        &mut t,
-        &session,
-        &[
-            "Tab #1".to_string(),
-            format!("~/{second}"),
-            format!("~/{third}"),
-            format!("~/{fourth}"),
-        ],
-        D8,
-    )?;
-    expect_view_not_to_contain(&mut t, "Tab #5", D2)?;
-    expect_view_not_to_contain(&mut t, "Tab #6", D2)?;
-
-    // Renaming the surviving fourth visible tab again should not affect tab #3.
-    go_to_tab(&mut t, 4)?;
-    cd_into_tab_name_dir(&mut t, fifth)?;
-    expect_tab_bar(
-        &mut t,
-        &session,
-        &[
-            "Tab #1".to_string(),
-            format!("~/{second}"),
-            format!("~/{third}"),
-            format!("~/{fifth}"),
-        ],
-        D8,
-    )?;
+    expect_tab_bar_to_contain(&mut t, &format!("~/{second}"), D8)?;
     Ok(())
 }

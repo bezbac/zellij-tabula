@@ -25,6 +25,20 @@ enum PaneStatus {
     Waiting,
 }
 
+/// A pane's working directory is not always known the moment its pane update
+/// arrives (the shell process may not have reported it yet), so seeding is
+/// retried a bounded number of times until every pane has one.
+const SEED_RETRY_INTERVAL_SECS: f64 = 0.1;
+const MAX_SEED_RETRIES: u32 = 20;
+
+#[derive(Default)]
+struct SeedOutcome {
+    /// At least one pane was given a working directory this round.
+    seeded: bool,
+    /// At least one pane's working directory could not be read yet.
+    pending: bool,
+}
+
 fn format_path(state: &State, path: &Path, path_suffix: &str) -> String {
     let git_metadata = state.get_git_path_metadata(path.to_path_buf());
 
@@ -117,6 +131,12 @@ struct State {
 
     /// Metadata about paths
     path_metadata: BTreeMap<PathBuf, PathMetadata>,
+
+    /// Remaining attempts to seed pane working dirs that are not known yet.
+    seed_retries: u32,
+
+    /// Whether a retry timer for seeding pane working dirs is pending.
+    seed_retry_scheduled: bool,
 }
 
 register_plugin!(State);
@@ -151,6 +171,7 @@ impl ZellijPlugin for State {
             EventType::PermissionRequestResult,
             EventType::RunCommandResult,
             EventType::CwdChanged,
+            EventType::Timer,
         ]);
     }
 
@@ -206,6 +227,8 @@ impl ZellijPlugin for State {
             }
             Event::PaneUpdate(data) => {
                 self.panes = data;
+                self.seed_retries = 0;
+                self.attempt_seed();
             }
             Event::PaneClosed(pane_id_enum) => {
                 self.handle_pane_closed(pane_id_enum);
@@ -219,6 +242,12 @@ impl ZellijPlugin for State {
             }
             Event::PermissionRequestResult(status) => {
                 self.permissions = Some(status);
+                self.seed_retries = 0;
+                self.attempt_seed();
+            }
+            Event::Timer(_) => {
+                self.seed_retry_scheduled = false;
+                self.attempt_seed();
             }
             Event::RunCommandResult(exit_code, stdout, stderr, context) => {
                 return self.handle_run_command_result(exit_code, stdout, stderr, &context);
@@ -233,6 +262,56 @@ impl ZellijPlugin for State {
 }
 
 impl State {
+    fn attempt_seed(&mut self) {
+        let outcome = self.seed_pane_working_dirs();
+
+        if outcome.seeded {
+            self.organize();
+        }
+
+        if outcome.pending {
+            self.schedule_seed_retry();
+        }
+    }
+
+    fn schedule_seed_retry(&mut self) {
+        if self.seed_retry_scheduled || self.seed_retries >= MAX_SEED_RETRIES {
+            return;
+        }
+
+        self.seed_retry_scheduled = true;
+        self.seed_retries += 1;
+        set_timeout(SEED_RETRY_INTERVAL_SECS);
+    }
+
+    fn seed_pane_working_dirs(&mut self) -> SeedOutcome {
+        if self.permissions != Some(PermissionStatus::Granted) {
+            return SeedOutcome::default();
+        }
+
+        let mut outcome = SeedOutcome::default();
+
+        for pane in self.panes.panes.values().flat_map(|panes| panes.iter()) {
+            if pane.is_plugin || pane.is_suppressed {
+                continue;
+            }
+
+            if self.pane_working_dirs.contains_key(&pane.id) {
+                continue;
+            }
+
+            match get_pane_cwd(PaneId::Terminal(pane.id)) {
+                Ok(cwd) => {
+                    self.pane_working_dirs.insert(pane.id, cwd);
+                    outcome.seeded = true;
+                }
+                Err(_) => outcome.pending = true,
+            }
+        }
+
+        outcome
+    }
+
     fn handle_pane_closed(&mut self, pane_id_enum: PaneId) {
         let pane_id = match pane_id_enum {
             PaneId::Terminal(pane_id) | PaneId::Plugin(pane_id) => pane_id,
