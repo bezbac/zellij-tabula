@@ -1,5 +1,3 @@
-import { expect } from "@microsoft/tui-test";
-
 export function waitFor(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -56,6 +54,16 @@ export async function pressTabModeKey(terminal, key) {
   await waitFor(300);
 }
 
+// zellij only re-sends TabUpdate on a layout change,
+// so a plugin that subscribes after the initial snapshot
+// never learns about the first tab and won't rename it.
+// Force a fresh TabUpdate by creating and immediately closing a new tab.
+export async function waitForPluginLoad(terminal) {
+  await pressTabModeKey(terminal, "n");
+  await pressTabModeKey(terminal, "x");
+  await waitFor(500);
+}
+
 export async function expectTabTitle(
   terminal,
   expectedTabTitle,
@@ -67,21 +75,4 @@ export async function expectTabTitle(
     `Zellij (${sessionName})  ${expectedTabTitle}`,
     timeout,
   );
-}
-
-export async function maybeApprovePermissions(terminal) {
-  const permissionPrompt = terminal.getByText(
-    "Plugin /zellij-tabula.wasm asks",
-    {
-      full: true,
-    },
-  );
-
-  try {
-    await expect(permissionPrompt).toBeVisible({ timeout: 10000 });
-    terminal.write("y");
-    await expect(permissionPrompt).not.toBeVisible({ timeout: 5000 });
-  } catch {
-    // Zellij may persist the plugin permission decision between runs.
-  }
 }

@@ -3,7 +3,7 @@ import {
   writeLine,
   expectViewToContain,
   expectViewNotToContain,
-  maybeApprovePermissions,
+  waitForPluginLoad,
 } from "./test-utils.js";
 
 test.use({ program: { file: "/bin/zsh" } });
@@ -23,12 +23,13 @@ test("prefixes tab titles when a pane is waiting", async ({ terminal }) => {
   await expect(terminal.getByText("Pane #1", { full: true })).toBeVisible({
     timeout: 10000,
   });
-  await maybeApprovePermissions(terminal);
 
   await expect(
     terminal.getByText("Using config /home/alice/.zshrc", { full: true }),
   ).toBeVisible();
   await expect(terminal.getByText("~ $", { strict: false })).toBeVisible();
+
+  await waitForPluginLoad(terminal);
 
   writeLine(terminal, `mkdir ${targetDir}`);
   writeLine(terminal, `cd ${targetDir}`);

@@ -37,6 +37,10 @@ RUN npm install
 # Configure zellij (mount target dirs must exist)
 RUN mkdir -p /home/alice/.config/zellij
 
+# Pre-populate the permission cache so zellij loads zellij-tabula without a live prompt
+COPY ./tests/permissions.kdl /home/alice/.cache/zellij/permissions.kdl
+RUN chown alice:alice /home/alice/.cache/zellij/permissions.kdl
+
 USER alice
 
 ENTRYPOINT ["./node_modules/.bin/tui-test"]

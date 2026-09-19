@@ -5,7 +5,6 @@ import {
   expectViewNotToContain,
   pressTabModeKey,
   expectTabTitle,
-  maybeApprovePermissions,
 } from "./test-utils.js";
 
 test.use({ program: { file: "/bin/zsh" } });
@@ -63,7 +62,6 @@ test("handles auto tab names after closing tabs", async ({ terminal }) => {
   await expect(terminal.getByText("Pane #1", { full: true })).toBeVisible({
     timeout: 10000,
   });
-  await maybeApprovePermissions(terminal);
   await expect(
     terminal.getByText("Using config /home/alice/.zshrc", { full: true }),
   ).toBeVisible();

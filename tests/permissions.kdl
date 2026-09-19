@@ -1,0 +1,5 @@
+"/zellij-tabula.wasm" {
+	ChangeApplicationState
+	ReadApplicationState
+	RunCommands
+}

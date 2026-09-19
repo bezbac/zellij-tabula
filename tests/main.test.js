@@ -2,7 +2,7 @@ import { test, expect } from "@microsoft/tui-test";
 import {
   expectViewToContain,
   expectViewNotToContain,
-  maybeApprovePermissions,
+  waitForPluginLoad,
 } from "./test-utils.js";
 
 test.use({ program: { file: "/bin/zsh" } });
@@ -44,13 +44,13 @@ test("renames tab on navigation", async ({ terminal }) => {
     terminal.getByText(`Zellij (${sessionName})  Tab #1`, { full: true }),
   ).toBeVisible();
 
-  await maybeApprovePermissions(terminal);
-
   await expect(
     terminal.getByText("Using config /home/alice/.zshrc", { full: true }),
   ).toBeVisible();
 
   await expect(terminal.getByText("~ $", { full: true })).toBeVisible();
+
+  await waitForPluginLoad(terminal);
 
   terminal.write("cd test1");
   terminal.write("\r");
