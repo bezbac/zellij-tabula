@@ -24,8 +24,8 @@ async function expectTabBar(terminal, tabTitles, timeout = 8000) {
   await expectViewToContain(terminal, tabBarText(tabTitles), timeout);
 }
 
-async function newTab(terminal) {
-  await pressTabModeKey(terminal, "n");
+async function newTab(terminal, tabNumber) {
+  await pressTabModeKey(terminal, "n", `Tab #${tabNumber}`);
 }
 
 async function goToTab(terminal, tabNumber) {
@@ -76,7 +76,7 @@ test("handles auto tab names after closing tabs", async ({ terminal }) => {
   await expectTabTitle(terminal, "Tab #1", sessionName, 8000);
 
   for (let tabCount = 1; tabCount < 6; tabCount += 1) {
-    await newTab(terminal);
+    await newTab(terminal, tabCount + 1);
   }
 
   await expectViewToContain(terminal, "← +3  Tab #4  Tab #5  Tab #6", 8000);

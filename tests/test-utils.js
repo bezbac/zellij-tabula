@@ -20,7 +20,7 @@ export async function expectViewToContain(
       return;
     }
 
-    await waitFor(100);
+    await waitFor(20);
     view = terminal.serialize().view;
   }
 
@@ -40,18 +40,29 @@ export async function expectViewNotToContain(
       return;
     }
 
-    await waitFor(100);
+    await waitFor(20);
     view = terminal.serialize().view;
   }
 
   throw new Error(`Still found "${unexpectedText}" in:\n${view}`);
 }
 
-export async function pressTabModeKey(terminal, key) {
+export async function pressTabModeKey(
+  terminal,
+  key,
+  expectedText,
+  timeout = 5000,
+) {
   terminal.write("\u0014");
-  await waitFor(100);
   terminal.write(key);
-  await waitFor(300);
+  if (expectedText) {
+    await expectViewToContain(terminal, expectedText, timeout);
+  } else {
+    // No view marker exists for tab focus, and zellij's tab mode stays
+    // active after the action key and would swallow the next keystroke.
+    // Give it a beat to return to normal mode before the caller sends input.
+    await waitFor(50);
+  }
 }
 
 // zellij only re-sends TabUpdate on a layout change,
@@ -59,9 +70,9 @@ export async function pressTabModeKey(terminal, key) {
 // never learns about the first tab and won't rename it.
 // Force a fresh TabUpdate by creating and immediately closing a new tab.
 export async function waitForPluginLoad(terminal) {
-  await pressTabModeKey(terminal, "n");
+  await pressTabModeKey(terminal, "n", "Tab #2");
   await pressTabModeKey(terminal, "x");
-  await waitFor(500);
+  await expectViewNotToContain(terminal, "Tab #2");
 }
 
 export async function expectTabTitle(
