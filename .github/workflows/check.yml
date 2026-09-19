@@ -25,6 +25,25 @@ jobs:
       - name: Check clippy
         run: cargo clippy -- -D clippy::all -D clippy::pedantic -A clippy::no_mangle_with_rust_abi
 
+  check-integration-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install rust toolchain
+        uses: dtolnay/rust-toolchain@1.96.1
+        with:
+          components: rustfmt, clippy
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Check clippy
+        run: cargo clippy -- -D clippy::all -D clippy::pedantic
+
   check-opencode-integration:
     runs-on: ubuntu-latest
     defaults:

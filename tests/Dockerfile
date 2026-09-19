@@ -1,19 +1,22 @@
+# syntax=docker/dockerfile:1
+
+# Build the Rust integration-test binary (a standalone runner) on a pinned
+# toolchain, then copy it into the runtime image that has zsh + zellij.
+FROM rust:1.96.1 AS builder
+WORKDIR /app
+
+COPY ./tests/Cargo.toml ./tests/Cargo.lock ./
+COPY ./tests/src ./src
+RUN cargo build --release
+
 FROM ubuntu:latest
 
 RUN apt update
 
-# Install curl
-RUN apt install curl -y
+# Install curl, git, zsh
+RUN apt install -y curl git zsh
 
-# Install git
-RUN apt install git -y
-
-# Install Node.js and npm
-RUN apt install -y nodejs npm
-
-# Install zsh
-RUN apt install zsh -y
-RUN useradd --create-home --shell $(which zsh) alice
+RUN useradd --create-home --shell /usr/bin/zsh alice
 ENV HOME=/home/alice
 ENV USER=alice
 
@@ -29,11 +32,6 @@ RUN echo "PS1='%F%B%~%b%f %F$ %f'" >> /home/alice/.zshrc
 RUN echo 'echo "Using config /home/alice/.zshrc\n"' >> /home/alice/.zshrc
 RUN chown alice:alice /home/alice/.zshrc
 
-# Install npm dependencies for tests
-WORKDIR /tests
-COPY ./tests/package.json ./package.json
-RUN npm install
-
 # Configure zellij (mount target dirs must exist)
 RUN mkdir -p /home/alice/.config/zellij
 
@@ -41,6 +39,8 @@ RUN mkdir -p /home/alice/.config/zellij
 COPY ./tests/permissions.kdl /home/alice/.cache/zellij/permissions.kdl
 RUN chown alice:alice /home/alice/.cache/zellij/permissions.kdl
 
+COPY --from=builder /app/target/release/integration-tests /usr/local/bin/integration-tests
+
 USER alice
 
-ENTRYPOINT ["./node_modules/.bin/tui-test"]
+ENTRYPOINT ["/usr/local/bin/integration-tests"]
