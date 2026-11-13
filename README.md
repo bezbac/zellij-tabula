@@ -1,5 +1,8 @@
 # zellij-tabula
 
+[![E2E](https://github.com/Liu-Eroteme/zellij-tabula/actions/workflows/e2e.yml/badge.svg)](https://github.com/Liu-Eroteme/zellij-tabula/actions/workflows/e2e.yml)
+[![Check](https://github.com/Liu-Eroteme/zellij-tabula/actions/workflows/check.yml/badge.svg)](https://github.com/Liu-Eroteme/zellij-tabula/actions/workflows/check.yml)
+
 A [Zellij](https://zellij.dev) plugin to automatically rename tabs based on the working directory of the contained panes.
 
 ### 🚧 Disclaimer
@@ -52,6 +55,38 @@ Examples:
 
 - `worktree_name_display "repo_and_worktree"` with `worktree_name_preview_length "10"` => `repo/src (🌲 feature-bra...)`
 - `worktree_name_display "worktree_only"` ignores `worktree_name_preview_length` => `feature-branch/src`
+
+### `rename_policy`
+
+Controls how a tab is named when its panes are in different directories.
+
+- `common`: the deepest directory shared by all panes, e.g. `~/projects/* (3 panes)`
+- `majority`: the directory more than half of the panes are in (2 of 3, 3 of 5, ...), named as if
+  only those panes existed, e.g. `repo/`
+- `area`: the directory of the pane taking up the most space, e.g. the 60% pane of a 60/40 split.
+  Floating panes are only considered when the tab has no tiled panes.
+
+If `majority` or `area` find no clear winner (e.g. a 2/2 split, or two equally large panes in
+different directories), they fall back to `common`. The default is `common`.
+
+### `respect_rename`
+
+When `"true"`, tabs you rename yourself (or that are renamed by another tool) are no longer
+renamed automatically. Rename a tab to an empty name or back to its default `Tab #N` to hand it
+back to zellij-tabula. Pinned tabs also don't get the ⏳ status indicator.
+
+This is only kept in memory: after a plugin reload or a session restore, all tabs are named
+automatically again. The default is `"false"`.
+
+```kdl
+load_plugins {
+    "https://github.com/bezbac/zellij-tabula/releases/download/v0.6.0/zellij-tabula.wasm" {
+        home_dir "YOUR_HOME_DIRECTORY"
+        rename_policy "majority"
+        respect_rename "true"
+    }
+}
+```
 
 ### `rewrites`
 
