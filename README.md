@@ -1,5 +1,8 @@
 # zellij-tabula
 
+[![E2E](https://github.com/Liu-Eroteme/zellij-tabula/actions/workflows/e2e.yml/badge.svg)](https://github.com/Liu-Eroteme/zellij-tabula/actions/workflows/e2e.yml)
+[![Check](https://github.com/Liu-Eroteme/zellij-tabula/actions/workflows/check.yml/badge.svg)](https://github.com/Liu-Eroteme/zellij-tabula/actions/workflows/check.yml)
+
 A [Zellij](https://zellij.dev) plugin to automatically rename tabs based on the working directory of the contained panes.
 
 ### 🚧 Disclaimer
