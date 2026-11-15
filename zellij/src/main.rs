@@ -5,7 +5,10 @@ use std::cell::RefCell;
 use std::convert::TryFrom;
 use std::path::Path;
 use std::str::FromStr;
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::PathBuf,
+};
 
 #[derive(Clone, Debug)]
 struct PathMetadata {
@@ -471,6 +474,25 @@ fn common_dir(panes: &[PaneDir]) -> PathBuf {
         .unwrap_or_default()
 }
 
+/// Names zellij gives tabs by default (`Tab #3`).
+fn is_default_tab_name(name: &str) -> bool {
+    name.strip_prefix("Tab #")
+        .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+}
+
+/// What this plugin knows about a tab's name, to tell its own renames apart from someone
+/// else's.
+#[derive(Default)]
+struct TabNames {
+    /// A rename this plugin requested that hasn't shown up in a tab update yet. Only one is
+    /// ever in flight per tab, so a late update can't be mistaken for someone else's rename.
+    requested: Option<String>,
+    /// The last name this plugin set and saw applied.
+    applied: Option<String>,
+    /// Whether someone else renamed the tab, so it is no longer named automatically.
+    external: bool,
+}
+
 #[derive(Default)]
 struct State {
     /// The configuration passed to the plugin from zellij
@@ -510,6 +532,14 @@ struct State {
     /// How tabs with panes in different directories are named, from `rename_policy`. Parsed once in
     /// `load` so an unknown value is reported once, instead of on every rename.
     rename_policy: RenamePolicy,
+
+    /// Whether manually renamed tabs are left alone, from `respect_rename`.
+    respect_rename: bool,
+
+    /// Name bookkeeping per open tab id, to tell this plugin's renames from someone else's.
+    /// Only kept in memory, so a plugin reload or session restore names all tabs automatically
+    /// again.
+    tab_names: BTreeMap<usize, TabNames>,
 }
 
 register_plugin!(State);
@@ -539,6 +569,9 @@ impl ZellijPlugin for State {
                 RenamePolicy::Common
             }),
         };
+        self.respect_rename = configuration
+            .get("respect_rename")
+            .is_some_and(|value| value == "true");
         self.userspace_configuration = configuration;
         request_permission(&[
             PermissionType::ReadApplicationState,
@@ -604,7 +637,9 @@ impl ZellijPlugin for State {
     fn update(&mut self, event: Event) -> bool {
         match event {
             Event::TabUpdate(tab_info) => {
+                self.track_renames(&tab_info);
                 self.tabs = tab_info;
+                self.organize();
             }
             Event::PaneUpdate(data) => {
                 // Pane updates also arrive for focus changes, which leave every tab name as it
@@ -914,12 +949,22 @@ impl State {
         None
     }
 
-    fn organize(&self) {
+    /// Renames every tab whose name is out of date, and remembers what was requested so
+    /// `track_renames` can tell these renames apart from manual ones.
+    fn organize(&mut self) {
         for (tab_id, tab_name) in self.tab_renames() {
             let Ok(rename_target) = u64::try_from(tab_id) else {
                 continue;
             };
 
+            let names = self.tab_names.entry(tab_id).or_default();
+
+            // Wait for the previous rename of this tab to show up in a tab update first
+            if names.requested.is_some() {
+                continue;
+            }
+
+            names.requested = Some(tab_name.clone());
             rename_tab_with_id(rename_target, tab_name);
         }
     }
@@ -929,6 +974,15 @@ impl State {
         let mut renames = Vec::new();
 
         for tab in &self.tabs {
+            if self.tab_names.get(&tab.tab_id).is_some_and(|n| n.external) {
+                continue;
+            }
+
+            // Entering rename mode clears the tab name before the user types
+            if tab.name.is_empty() {
+                continue;
+            }
+
             let panes: Vec<&PaneInfo> = self
                 .panes
                 .panes
@@ -979,6 +1033,65 @@ impl State {
         }
 
         renames
+    }
+
+    /// Compares incoming tab names with the previous ones to find tabs that were renamed by
+    /// someone other than this plugin. With `respect_rename`, those are no longer renamed until
+    /// they get their default `Tab #N` name again.
+    fn track_renames(&mut self, new_tabs: &[TabInfo]) {
+        for tab in new_tabs {
+            let id = tab.tab_id;
+
+            // Entering rename mode clears the tab name before the user types, which is not a
+            // rename. Ignoring it leaves the tab as it is, instead of renaming it while edited.
+            if tab.name.is_empty() {
+                continue;
+            }
+
+            // Our request was applied
+            if self.tab_names.get(&id).and_then(|n| n.requested.as_ref()) == Some(&tab.name) {
+                let names = self.tab_names.entry(id).or_default();
+                names.requested = None;
+                names.applied = Some(tab.name.clone());
+                names.external = false;
+                continue;
+            }
+
+            // Our name was restored, e.g. by cancelling a rename
+            if self.tab_names.get(&id).and_then(|n| n.applied.as_ref()) == Some(&tab.name) {
+                self.tab_names.entry(id).or_default().external = false;
+                continue;
+            }
+
+            let Some(previous) = self.tabs.iter().find(|t| t.tab_id == id) else {
+                // A new tab, or the first update since the plugin loaded
+                continue;
+            };
+
+            // Nothing changed. Our rename may still be on its way, but zellij may also have
+            // dropped it, so let `organize` request it again instead of blocking every later
+            // rename of this tab.
+            if previous.name == tab.name {
+                if let Some(names) = self.tab_names.get_mut(&id) {
+                    names.requested = None;
+                }
+
+                continue;
+            }
+
+            // The tab got a name we never requested, so our request was overridden
+            let names = self.tab_names.entry(id).or_default();
+            names.requested = None;
+
+            if !self.respect_rename {
+                continue;
+            }
+
+            names.external = !is_default_tab_name(&tab.name);
+        }
+
+        let open: BTreeSet<usize> = new_tabs.iter().map(|tab| tab.tab_id).collect();
+        self.tab_names.retain(|id, _| open.contains(id));
     }
 
     fn worktree_name_display(&self) -> WorktreeNameDisplay {
@@ -1048,6 +1161,48 @@ mod tests {
 
         assert!(!pane_layout_changed(&before, &refocused));
         assert!(pane_layout_changed(&before, &resized));
+    }
+
+    /// Two panes in different dirs in one tab, already named after the equal split.
+    fn state_with_split_tab(policy: RenamePolicy) -> State {
+        let mut state = state_with_home_dir("/home/alice");
+        state.rename_policy = policy;
+        state.tabs = vec![tab(0, "~/* (2 panes)")];
+        state.panes = manifest(vec![sized_pane(1, 50, true), sized_pane(2, 50, false)]);
+        state
+            .pane_working_dirs
+            .insert(1, PathBuf::from("/home/alice/repo"));
+        state
+            .pane_working_dirs
+            .insert(2, PathBuf::from("/home/alice/notes"));
+        state
+    }
+
+    #[test]
+    fn resizing_panes_renames_tab() {
+        let mut state = state_with_split_tab(RenamePolicy::Area);
+        assert!(state.tab_renames().is_empty());
+
+        state.update(Event::PaneUpdate(manifest(vec![
+            sized_pane(1, 60, true),
+            sized_pane(2, 40, false),
+        ])));
+
+        assert_eq!(requested(&state), Some(&String::from("~/repo")));
+    }
+
+    #[test]
+    fn focus_change_does_not_rename_tab() {
+        let mut state = state_with_split_tab(RenamePolicy::Area);
+        // Make the stored name outdated, so a rename would show up if one happened
+        state.tabs = vec![tab(0, "outdated")];
+
+        state.update(Event::PaneUpdate(manifest(vec![
+            sized_pane(1, 50, false),
+            sized_pane(2, 50, true),
+        ])));
+
+        assert_eq!(requested(&state), None);
     }
 
     #[test]
@@ -1222,6 +1377,152 @@ mod tests {
             ),
             "git-project/src/* (🌲 git-projec...)"
         );
+    }
+
+    #[test]
+    fn recognizes_default_tab_names() {
+        assert!(is_default_tab_name("Tab #1"));
+        assert!(is_default_tab_name("Tab #12"));
+        assert!(!is_default_tab_name(""));
+        assert!(!is_default_tab_name("Tab #"));
+        assert!(!is_default_tab_name("Tab #1a"));
+        assert!(!is_default_tab_name("repo/"));
+    }
+
+    #[test]
+    fn empty_name_during_rename_does_not_trigger_a_rename() {
+        let mut state = state_with_repo_tab(true, "~/repo");
+
+        // Entering rename mode clears the name before the user types
+        tab_update(&mut state, vec![tab(0, "")]);
+        assert!(state.tab_names.get(&0).is_none_or(|n| !n.external));
+        assert!(state.tab_renames().is_empty());
+
+        // Typing a name then hands the tab over
+        tab_update(&mut state, vec![tab(0, "my tab")]);
+        assert!(state.tab_names.get(&0).is_some_and(|n| n.external));
+        assert!(state.tab_renames().is_empty());
+    }
+
+    fn tab(tab_id: usize, name: &str) -> TabInfo {
+        TabInfo {
+            tab_id,
+            position: tab_id,
+            name: name.to_string(),
+            ..TabInfo::default()
+        }
+    }
+
+    /// A state with a single tab at position/id 0 that has one pane in `/home/alice/repo`.
+    fn state_with_repo_tab(respect_rename: bool, tab_name: &str) -> State {
+        let mut state = state_with_home_dir("/home/alice");
+        state.respect_rename = respect_rename;
+        state.tabs = vec![tab(0, tab_name)];
+        state.panes.panes.insert(
+            0,
+            vec![PaneInfo {
+                id: 1,
+                ..PaneInfo::default()
+            }],
+        );
+        state
+            .pane_working_dirs
+            .insert(1, PathBuf::from("/home/alice/repo"));
+        state
+    }
+
+    /// Feeds a tab update to the state, the way `update` does.
+    fn tab_update(state: &mut State, tabs: Vec<TabInfo>) {
+        state.track_renames(&tabs);
+        state.tabs = tabs;
+    }
+
+    fn requested(state: &State) -> Option<&String> {
+        state.tab_names.get(&0)?.requested.as_ref()
+    }
+
+    #[test]
+    fn manual_rename_is_ignored_without_respect_rename() {
+        let mut state = state_with_repo_tab(false, "~/repo");
+        tab_update(&mut state, vec![tab(0, "my tab")]);
+
+        assert!(state.tab_names.get(&0).is_none_or(|n| !n.external));
+        assert_eq!(state.tab_renames(), vec![(0, String::from("~/repo"))]);
+    }
+
+    #[test]
+    fn in_flight_rename_is_not_sent_again() {
+        let mut state = state_with_repo_tab(true, "Tab #1");
+        state.organize();
+        state.organize();
+
+        assert_eq!(requested(&state), Some(&String::from("~/repo")));
+    }
+
+    #[test]
+    fn manual_rename_is_overridden_without_respect_rename() {
+        let mut state = state_with_repo_tab(false, "Tab #1");
+        state.organize();
+        tab_update(&mut state, vec![tab(0, "~/repo")]);
+        tab_update(&mut state, vec![tab(0, "my tab")]);
+
+        // Not considered in flight anymore, so the name is requested again
+        state.organize();
+        assert_eq!(requested(&state), Some(&String::from("~/repo")));
+    }
+
+    #[test]
+    fn overridden_request_does_not_block_later_renames() {
+        let mut state = state_with_repo_tab(true, "Tab #1");
+        state.organize(); // requests "~/repo" while the tab is still named "Tab #1"
+
+        // The user renames the tab before the request is applied
+        tab_update(&mut state, vec![tab(0, "my tab")]);
+        assert!(state.tab_names.get(&0).is_some_and(|n| n.external));
+        assert_eq!(requested(&state), None);
+
+        // Back to a default name, the stale request must not suppress the rename
+        tab_update(&mut state, vec![tab(0, "Tab #1")]);
+        state.organize();
+        assert_eq!(requested(&state), Some(&String::from("~/repo")));
+    }
+
+    #[test]
+    fn dropped_rename_is_requested_again() {
+        let mut state = state_with_repo_tab(true, "Tab #1");
+        state.organize();
+
+        // A tab update that doesn't apply the rename drops the request, so it is sent again
+        tab_update(&mut state, vec![tab(0, "Tab #1")]);
+        assert_eq!(requested(&state), None);
+
+        state.organize();
+        assert_eq!(requested(&state), Some(&String::from("~/repo")));
+    }
+
+    #[test]
+    fn cancelled_rename_releases_tab() {
+        let mut state = state_with_repo_tab(true, "Tab #1");
+        state.organize();
+        tab_update(&mut state, vec![tab(0, "~/repo")]);
+
+        // Typing in rename mode updates the name with every key press
+        tab_update(&mut state, vec![tab(0, "m")]);
+        tab_update(&mut state, vec![tab(0, "my")]);
+        assert!(state.tab_names.get(&0).is_some_and(|n| n.external));
+
+        // Cancelling restores the name this plugin set
+        tab_update(&mut state, vec![tab(0, "~/repo")]);
+        assert!(state.tab_names.get(&0).is_none_or(|n| !n.external));
+    }
+
+    #[test]
+    fn closed_tabs_are_forgotten() {
+        let mut state = state_with_repo_tab(true, "~/repo");
+        tab_update(&mut state, vec![tab(0, "my tab")]);
+        tab_update(&mut state, vec![]);
+
+        assert!(state.tab_names.is_empty());
     }
 
     #[test]

@@ -14,7 +14,7 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 type TestFn = fn() -> Result<()>;
 
 fn main() {
-    let tests: [(&str, TestFn); 8] = [
+    let tests: [(&str, TestFn); 9] = [
         ("renames tab on navigation", main_tab_rename),
         ("prefixes tab titles when a pane is waiting", pane_status),
         ("renames tab when closing a pane", close_pane),
@@ -26,6 +26,7 @@ fn main() {
             rename_policy_majority,
         ),
         ("names tabs after the largest pane", rename_policy_area),
+        ("leaves manually renamed tabs alone", respect_rename),
     ];
 
     let mut failures = 0;
@@ -280,24 +281,31 @@ fn cd_into_dir(t: &mut Terminal, dir: &str) -> Result<()> {
 
 const ZELLIJ_CONFIG: &str = "/home/alice/.config/zellij/config.kdl";
 
-/// Writes a copy of the mounted test config with `rename_policy` set, so a
-/// session can run with a non-default policy.
-fn config_with_rename_policy(policy: &str) -> Result<String> {
+/// Writes a copy of the mounted test config with an extra setting, so a
+/// session can run with non-default options.
+fn config_with_setting(setting: &str) -> Result<String> {
     let base = std::fs::read_to_string(ZELLIJ_CONFIG)?;
-    let setting = format!("rename_policy \"{policy}\"");
     let patched = base.replacen(
         "home_dir \"/home/alice\"",
         &format!("home_dir \"/home/alice\"\n        {setting}"),
         1,
     );
 
-    if !patched.contains(&setting) {
+    if !patched.contains(setting) {
         return Err(format!("{ZELLIJ_CONFIG} has no home_dir line to extend").into());
     }
 
-    let path = std::env::temp_dir().join(format!("tabula-config-{policy}.kdl"));
+    let file_name: String = setting
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    let path = std::env::temp_dir().join(format!("tabula-config-{file_name}.kdl"));
     std::fs::write(&path, patched)?;
     Ok(path.to_string_lossy().into_owned())
+}
+
+fn config_with_rename_policy(policy: &str) -> Result<String> {
+    config_with_setting(&format!("rename_policy \"{policy}\""))
 }
 
 fn attach_with_config(t: &mut Terminal, config: &str, session: &str) -> Result<()> {
@@ -488,6 +496,41 @@ fn rewrites() -> Result<()> {
     )?;
     write_line(&mut t, "cd ../rewrite-worktree")?;
     expect_tab_bar_to_contain(&mut t, "zt (\u{1F332} rw)", D8)?;
+    Ok(())
+}
+
+/// Renames the focused tab through zellij's tab mode rename prompt.
+fn rename_focused_tab(t: &mut Terminal, name: &str) -> Result<()> {
+    press_tab_mode_key(t, 'r', None, D5)?;
+    write_line(t, name)?;
+    Ok(())
+}
+
+fn respect_rename() -> Result<()> {
+    let mut t = spawn_zsh()?;
+    let session = format!("respect-rename-session-{}", unique_suffix());
+    let config = config_with_setting("respect_rename \"true\"")?;
+
+    expect_full_text_to_contain(&mut t, "Using config /home/alice/.zshrc", D5)?;
+    attach_with_config(&mut t, &config, &session)?;
+
+    write_line(&mut t, "mkdir -p repo notes")?;
+    cd_into_dir(&mut t, "repo")?;
+    expect_tab_bar_to_contain(&mut t, &format!("Zellij ({session})  ~/repo"), D8)?;
+
+    // Renaming the tab hands it over to the user.
+    rename_focused_tab(&mut t, "my tab")?;
+    expect_tab_bar_to_contain(&mut t, &format!("Zellij ({session})  my tab"), D8)?;
+
+    // Moving the pane no longer renames the tab.
+    cd_into_dir(&mut t, "notes")?;
+    expect_view_to_contain(&mut t, "~/notes $", D5)?;
+    expect_tab_bar_to_contain(&mut t, &format!("Zellij ({session})  my tab"), D5)?;
+    expect_tab_bar_not_to_contain(&mut t, "~/notes", D2)?;
+
+    // Renaming it to its default name hands it back to zellij-tabula.
+    rename_focused_tab(&mut t, "Tab #1")?;
+    expect_tab_bar_to_contain(&mut t, &format!("Zellij ({session})  ~/notes"), D8)?;
     Ok(())
 }
 

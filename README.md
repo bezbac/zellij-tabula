@@ -79,6 +79,21 @@ load_plugins {
 }
 ```
 
+### `respect_rename`
+
+When `"true"`, tabs you rename yourself (or that are renamed by another tool) are no longer renamed automatically. Rename a tab back to its default `Tab #N` name to hand it back to zellij-tabula.
+
+This is only kept in memory: after a plugin reload or a session restore, all tabs are named automatically again. The default is `"false"`.
+
+```kdl
+load_plugins {
+    "https://github.com/bezbac/zellij-tabula/releases/download/v0.6.0/zellij-tabula.wasm" {
+        home_dir "YOUR_HOME_DIRECTORY"
+        respect_rename "true"
+    }
+}
+```
+
 ### `rewrites`
 
 The plugin accepts a `rewrites` block to customize how tab names are rendered. Each entry is a regex pattern applied to a specific path element:
@@ -123,6 +138,8 @@ Set the current pane's status to `waiting`:
 ```bash
 zellij pipe --name tabula -- "status '${ZELLIJ_PANE_ID}' 'waiting'"
 ```
+
+A tab renamed by you is left alone when `respect_rename` is enabled, so it gets no `⏳` prefix.
 
 ## Integrations
 
