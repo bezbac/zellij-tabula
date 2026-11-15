@@ -1,6 +1,7 @@
 use zellij_tile::prelude::*;
 
 use regex::Regex;
+use std::cell::RefCell;
 use std::convert::TryFrom;
 use std::path::Path;
 use std::str::FromStr;
@@ -302,6 +303,174 @@ fn truncate_with_ellipsis(value: &str, preview_length: usize) -> String {
     format!("{truncated_value}...")
 }
 
+/// A `git rev-parse` lookup for a path that hasn't produced metadata yet.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum GitLookup {
+    /// The command is still running.
+    Pending,
+    /// The command failed, the path is not inside a git repository.
+    // NOTE: never retried, so a later `git init` in that path only shows up after a reload
+    NotARepo,
+}
+
+/// Whether panes were added, removed or resized, which is what changes a tab's name. Pane updates
+/// also arrive for focus changes, which leave the layout as it is.
+fn pane_layout_changed(before: &PaneManifest, after: &PaneManifest) -> bool {
+    if before.panes.len() != after.panes.len() {
+        return true;
+    }
+
+    before.panes.iter().any(|(position, panes)| {
+        let Some(other) = after.panes.get(position) else {
+            return true;
+        };
+
+        panes.len() != other.len()
+            || panes.iter().zip(other).any(|(left, right)| {
+                left.id != right.id
+                    || left.pane_rows != right.pane_rows
+                    || left.pane_columns != right.pane_columns
+                    || left.is_floating != right.is_floating
+                    || left.is_suppressed != right.is_suppressed
+            })
+    })
+}
+
+/// How a tab whose panes are in different directories gets its name.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum RenamePolicy {
+    /// Name after the deepest directory shared by all panes (`dir/* (N panes)`).
+    #[default]
+    Common,
+    /// Name after the directory more than half of the panes are in.
+    Majority,
+    /// Name after the directory of the pane covering the largest area.
+    Area,
+}
+
+impl FromStr for RenamePolicy {
+    type Err = ();
+
+    fn from_str(value: &str) -> Result<Self, ()> {
+        match value {
+            "common" => Ok(Self::Common),
+            "majority" => Ok(Self::Majority),
+            "area" => Ok(Self::Area),
+            _ => Err(()),
+        }
+    }
+}
+
+/// A pane's working directory along with the pane itself, which the rename policies read
+/// what they need from.
+#[derive(Debug)]
+struct PaneDir<'a> {
+    dir: &'a PathBuf,
+    pane: &'a PaneInfo,
+}
+
+/// The panes a tab is named after. Floating panes are drawn on top of the tiled panes rather than
+/// taking up space of their own, so they only count when the tab has no tiled panes.
+fn naming_panes<'a>(panes: &[&'a PaneInfo]) -> Vec<&'a PaneInfo> {
+    if panes.iter().any(|pane| !pane.is_floating) {
+        return panes
+            .iter()
+            .copied()
+            .filter(|pane| !pane.is_floating)
+            .collect();
+    }
+
+    panes.to_vec()
+}
+
+/// The directory a tab is named after, and how it was picked.
+#[derive(Debug, PartialEq, Eq)]
+enum TabDir {
+    /// A single pane: `dir`
+    Single(PathBuf),
+    /// Several panes in this exact directory: `dir/`
+    Shared(PathBuf),
+    /// Panes spread across directories, this is their deepest common one: `dir/* (N panes)`
+    Common(PathBuf),
+}
+
+/// Picks the directory to name a tab after. `None` if no pane has a known working directory.
+fn choose_tab_dir(policy: RenamePolicy, panes: &[PaneDir]) -> Option<TabDir> {
+    let first = panes.first()?.dir;
+
+    if panes.iter().all(|pane| pane.dir == first) {
+        return Some(tab_dir_for(panes, first));
+    }
+
+    let picked = match policy {
+        RenamePolicy::Common => None,
+        RenamePolicy::Majority => majority_dir(panes),
+        RenamePolicy::Area => largest_pane_dir(panes),
+    };
+
+    // Policies without a clear winner (e.g. a 2/2 split) fall back to the common directory
+    Some(match picked {
+        Some(dir) => tab_dir_for(panes, dir),
+        None => TabDir::Common(common_dir(panes)),
+    })
+}
+
+/// Names a tab after `dir`, marking it as shared when several panes are in it: `dir/` vs `dir`.
+fn tab_dir_for(panes: &[PaneDir], dir: &PathBuf) -> TabDir {
+    let panes_in_dir = panes.iter().filter(|pane| pane.dir == dir).count();
+
+    if panes_in_dir > 1 {
+        TabDir::Shared(dir.clone())
+    } else {
+        TabDir::Single(dir.clone())
+    }
+}
+
+/// The directory strictly more than half of the panes are in (2 of 3, 3 of 5, ...).
+fn majority_dir<'a>(panes: &[PaneDir<'a>]) -> Option<&'a PathBuf> {
+    let mut counts: BTreeMap<&PathBuf, usize> = BTreeMap::new();
+
+    for pane in panes {
+        *counts.entry(pane.dir).or_default() += 1;
+    }
+
+    counts
+        .into_iter()
+        .find(|(_, count)| count * 2 > panes.len())
+        .map(|(dir, _)| dir)
+}
+
+/// The directory of the single largest pane.
+fn largest_pane_dir<'a>(panes: &[PaneDir<'a>]) -> Option<&'a PathBuf> {
+    let area = |pane: &PaneDir| pane.pane.pane_rows * pane.pane.pane_columns;
+
+    let max_area = panes.iter().map(area).max()?;
+    let winner = panes.iter().find(|pane| area(pane) == max_area)?;
+
+    // An exact tie between directories has no winner
+    let tie = panes
+        .iter()
+        .any(|pane| area(pane) == max_area && pane.dir != winner.dir);
+
+    (!tie).then_some(winner.dir)
+}
+
+/// The deepest directory containing every pane's working directory.
+fn common_dir(panes: &[PaneDir]) -> PathBuf {
+    panes
+        .iter()
+        .map(|pane| pane.dir.as_path())
+        .reduce(|common, dir| {
+            // The ancestor chain ends with the empty path, which every path starts with
+            common
+                .ancestors()
+                .find(|ancestor| dir.starts_with(ancestor))
+                .unwrap_or(Path::new(""))
+        })
+        .map(Path::to_path_buf)
+        .unwrap_or_default()
+}
+
 #[derive(Default)]
 struct State {
     /// The configuration passed to the plugin from zellij
@@ -328,11 +497,19 @@ struct State {
     /// Metadata about paths
     path_metadata: BTreeMap<PathBuf, PathMetadata>,
 
+    /// Git lookups that are running or failed, so they aren't repeated on every rename. In a
+    /// `RefCell` because lookups are started while formatting names, which only borrows `State`.
+    git_lookups: RefCell<BTreeMap<PathBuf, GitLookup>>,
+
     /// Remaining attempts to seed pane working dirs that are not known yet.
     seed_retries: u32,
 
     /// Whether a retry timer for seeding pane working dirs is pending.
     seed_retry_scheduled: bool,
+
+    /// How tabs with panes in different directories are named, from `rename_policy`. Parsed once in
+    /// `load` so an unknown value is reported once, instead of on every rename.
+    rename_policy: RenamePolicy,
 }
 
 register_plugin!(State);
@@ -355,6 +532,13 @@ fn parse_pane_status(value: &str) -> Option<PaneStatus> {
 impl ZellijPlugin for State {
     fn load(&mut self, configuration: BTreeMap<String, String>) {
         self.rewrites = parse_rewrites(&configuration);
+        self.rename_policy = match configuration.get("rename_policy").map(String::as_str) {
+            None => RenamePolicy::Common,
+            Some(policy) => policy.parse().unwrap_or_else(|()| {
+                eprintln!("Unknown rename_policy {policy:?}, falling back to \"common\"");
+                RenamePolicy::Common
+            }),
+        };
         self.userspace_configuration = configuration;
         request_permission(&[
             PermissionType::ReadApplicationState,
@@ -423,9 +607,16 @@ impl ZellijPlugin for State {
                 self.tabs = tab_info;
             }
             Event::PaneUpdate(data) => {
+                // Pane updates also arrive for focus changes, which leave every tab name as it
+                // was. Resizes do change it, for the `area` policy.
+                let layout_changed = pane_layout_changed(&self.panes, &data);
                 self.panes = data;
                 self.seed_retries = 0;
-                self.attempt_seed();
+                let organized = self.attempt_seed();
+
+                if layout_changed && !organized {
+                    self.organize();
+                }
             }
             Event::PaneClosed(pane_id_enum) => {
                 self.handle_pane_closed(pane_id_enum);
@@ -459,7 +650,9 @@ impl ZellijPlugin for State {
 }
 
 impl State {
-    fn attempt_seed(&mut self) {
+    /// Seeds working dirs for panes that don't have one yet. Returns whether that organized the
+    /// tabs.
+    fn attempt_seed(&mut self) -> bool {
         let outcome = self.seed_pane_working_dirs();
 
         if outcome.seeded {
@@ -469,6 +662,8 @@ impl State {
         if outcome.pending {
             self.schedule_seed_retry();
         }
+
+        outcome.seeded
     }
 
     fn schedule_seed_retry(&mut self) {
@@ -543,12 +738,22 @@ impl State {
             return false;
         }
 
+        let lookup_path = context.get("path").map(PathBuf::from);
+
         let Some((path, metadata)) =
             Self::parse_git_path_metadata_output(exit_code, stdout, stderr, context)
         else {
+            // Remember the failure so the lookup isn't repeated on every rename
+            if let Some(path) = lookup_path {
+                self.git_lookups
+                    .borrow_mut()
+                    .insert(path, GitLookup::NotARepo);
+            }
+
             return false;
         };
 
+        self.git_lookups.borrow_mut().remove(&path);
         self.path_metadata.insert(path, metadata);
         self.organize();
 
@@ -676,90 +881,89 @@ impl State {
 
     fn get_git_path_metadata(&self, path: PathBuf) -> Option<PathMetadata> {
         if let Some(metadata) = self.path_metadata.get(&path) {
-            Some(metadata.clone())
-        } else {
-            if let Some(PermissionStatus::Granted) = self.permissions {
-                let mut context = BTreeMap::new();
-                context.insert(String::from("plugin"), String::from("tabula"));
-                context.insert(String::from("fn"), String::from("get_git_path_metadata"));
-                context.insert(String::from("path"), String::from(path.to_string_lossy()));
-                run_command_with_env_variables_and_cwd(
-                    &[
-                        "git",
-                        "rev-parse",
-                        "--path-format=absolute",
-                        "--show-toplevel",
-                        "--git-common-dir",
-                    ],
-                    BTreeMap::new(),
-                    path,
-                    context,
-                );
-            }
-
-            None
+            return Some(metadata.clone());
         }
+
+        // Already running, or known to not be inside a git repository
+        if self.git_lookups.borrow().contains_key(&path) {
+            return None;
+        }
+
+        if let Some(PermissionStatus::Granted) = self.permissions {
+            self.git_lookups
+                .borrow_mut()
+                .insert(path.clone(), GitLookup::Pending);
+            let mut context = BTreeMap::new();
+            context.insert(String::from("plugin"), String::from("tabula"));
+            context.insert(String::from("fn"), String::from("get_git_path_metadata"));
+            context.insert(String::from("path"), String::from(path.to_string_lossy()));
+            run_command_with_env_variables_and_cwd(
+                &[
+                    "git",
+                    "rev-parse",
+                    "--path-format=absolute",
+                    "--show-toplevel",
+                    "--git-common-dir",
+                ],
+                BTreeMap::new(),
+                path,
+                context,
+            );
+        }
+
+        None
     }
 
     fn organize(&self) {
-        'tab: for tab in &self.tabs {
-            let tab_position = tab.position;
-
-            let panes: Vec<PaneInfo> = self
-                .panes
-                .panes
-                .get(&tab_position)
-                .cloned()
-                .unwrap_or_default()
-                .into_iter()
-                .filter(|p| !p.is_suppressed && !p.is_plugin)
-                .collect();
-
-            let working_dirs_in_tab: Vec<&PathBuf> = panes
-                .iter()
-                .filter_map(|p| self.pane_working_dirs.get(&p.id))
-                .collect();
-
-            if working_dirs_in_tab.is_empty() {
+        for (tab_id, tab_name) in self.tab_renames() {
+            let Ok(rename_target) = u64::try_from(tab_id) else {
                 continue;
-            }
+            };
 
-            let mut tab_name = 'tab_name: {
-                let Some(first_working_dir) = working_dirs_in_tab.first().copied() else {
-                    // If there are no working dirs, skip this tab
-                    continue 'tab;
-                };
+            rename_tab_with_id(rename_target, tab_name);
+        }
+    }
 
-                if working_dirs_in_tab.len() == 1 {
-                    break 'tab_name format_path(self, first_working_dir, "");
+    /// The new names for all tabs that need renaming, as `(tab_id, name)`.
+    fn tab_renames(&self) -> Vec<(usize, String)> {
+        let mut renames = Vec::new();
+
+        for tab in &self.tabs {
+            let panes: Vec<&PaneInfo> = self
+                .panes
+                .panes
+                .get(&tab.position)
+                .map(|panes| {
+                    panes
+                        .iter()
+                        .filter(|p| !p.is_suppressed && !p.is_plugin)
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            let panes = naming_panes(&panes);
+
+            let pane_dirs: Vec<PaneDir> = panes
+                .iter()
+                .filter_map(|pane| {
+                    Some(PaneDir {
+                        dir: self.pane_working_dirs.get(&pane.id)?,
+                        pane,
+                    })
+                })
+                .collect();
+
+            // Skip tabs where no working dirs are known yet
+            let Some(tab_dir) = choose_tab_dir(self.rename_policy, &pane_dirs) else {
+                continue;
+            };
+
+            let mut tab_name = match tab_dir {
+                TabDir::Single(dir) => format_path(self, &dir, ""),
+                TabDir::Shared(dir) => format_path(self, &dir, "/"),
+                TabDir::Common(dir) => {
+                    format!("{} ({} panes)", format_path(self, &dir, "/*"), panes.len())
                 }
-
-                // If all working_dirs_in_tab are the same, use that as the tab name
-                if working_dirs_in_tab
-                    .iter()
-                    .all(|dir| *dir == first_working_dir)
-                {
-                    break 'tab_name format_path(self, first_working_dir, "/");
-                }
-
-                // Get the common directory of all entries in working_dirs_in_tab
-                let mut common_dir = first_working_dir.clone();
-
-                for dir in &working_dirs_in_tab {
-                    while !dir.starts_with(&common_dir) {
-                        if let Some(parent) = common_dir.parent() {
-                            common_dir = parent.to_path_buf();
-                        } else {
-                            break;
-                        }
-                    }
-                }
-
-                format!(
-                    "{} ({} panes)",
-                    format_path(self, &common_dir, "/*"),
-                    panes.len()
-                )
             };
 
             if panes
@@ -769,16 +973,12 @@ impl State {
                 tab_name = format!("⏳{tab_name}");
             }
 
-            if self.tabs[tab_position].name == tab_name {
-                continue;
+            if tab.name != tab_name {
+                renames.push((tab.tab_id, tab_name));
             }
-
-            let Some(rename_target) = u64::try_from(tab.tab_id).ok() else {
-                continue;
-            };
-
-            rename_tab_with_id(rename_target, tab_name);
         }
+
+        renames
     }
 
     fn worktree_name_display(&self) -> WorktreeNameDisplay {
@@ -822,6 +1022,94 @@ mod tests {
             preview_length.to_string(),
         );
         state
+    }
+
+    fn sized_pane(id: u32, columns: usize, is_focused: bool) -> PaneInfo {
+        PaneInfo {
+            id,
+            pane_rows: 10,
+            pane_columns: columns,
+            is_focused,
+            ..PaneInfo::default()
+        }
+    }
+
+    fn manifest(panes: Vec<PaneInfo>) -> PaneManifest {
+        PaneManifest {
+            panes: std::iter::once((0, panes)).collect(),
+        }
+    }
+
+    #[test]
+    fn pane_layout_change_ignores_focus_but_not_size() {
+        let before = manifest(vec![sized_pane(1, 50, true), sized_pane(2, 50, false)]);
+        let refocused = manifest(vec![sized_pane(1, 50, false), sized_pane(2, 50, true)]);
+        let resized = manifest(vec![sized_pane(1, 60, true), sized_pane(2, 40, false)]);
+
+        assert!(!pane_layout_changed(&before, &refocused));
+        assert!(pane_layout_changed(&before, &resized));
+    }
+
+    #[test]
+    fn failed_git_lookups_are_not_repeated() {
+        let mut state = State {
+            permissions: Some(PermissionStatus::Granted),
+            ..State::default()
+        };
+        let path = PathBuf::from("/tmp/not-a-repo");
+
+        assert!(state.get_git_path_metadata(path.clone()).is_none());
+        assert_eq!(
+            state.git_lookups.borrow().get(&path),
+            Some(&GitLookup::Pending)
+        );
+
+        let context = BTreeMap::from([
+            (String::from("plugin"), String::from("tabula")),
+            (String::from("fn"), String::from("get_git_path_metadata")),
+            (String::from("path"), String::from("/tmp/not-a-repo")),
+        ]);
+        state.handle_run_command_result(Some(128), vec![], b"fatal".to_vec(), &context);
+
+        assert_eq!(
+            state.git_lookups.borrow().get(&path),
+            Some(&GitLookup::NotARepo)
+        );
+        assert!(state.get_git_path_metadata(path.clone()).is_none());
+        assert_eq!(
+            state.git_lookups.borrow().get(&path),
+            Some(&GitLookup::NotARepo)
+        );
+    }
+
+    #[test]
+    fn successful_git_lookup_is_cached_as_metadata() {
+        let mut state = State {
+            permissions: Some(PermissionStatus::Granted),
+            ..State::default()
+        };
+        let path = PathBuf::from("/home/alice/repo");
+        state.get_git_path_metadata(path.clone());
+
+        let context = BTreeMap::from([
+            (String::from("plugin"), String::from("tabula")),
+            (String::from("fn"), String::from("get_git_path_metadata")),
+            (String::from("path"), String::from("/home/alice/repo")),
+        ]);
+        state.handle_run_command_result(
+            Some(0),
+            b"/home/alice/repo\n/home/alice/repo/.git\n".to_vec(),
+            vec![],
+            &context,
+        );
+
+        assert!(state.git_lookups.borrow().is_empty());
+        assert_eq!(
+            state
+                .get_git_path_metadata(path)
+                .map(|metadata| metadata.repo_name),
+            Some(String::from("repo"))
+        );
     }
 
     #[test]

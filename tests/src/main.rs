@@ -14,13 +14,18 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 type TestFn = fn() -> Result<()>;
 
 fn main() {
-    let tests: [(&str, TestFn); 6] = [
+    let tests: [(&str, TestFn); 8] = [
         ("renames tab on navigation", main_tab_rename),
         ("prefixes tab titles when a pane is waiting", pane_status),
         ("renames tab when closing a pane", close_pane),
         ("handles auto tab names after closing tabs", stable_id),
         ("names tabs by initial working directory", seed_tab_names),
         ("applies configured rewrites to tab names", rewrites),
+        (
+            "names tabs after the majority directory",
+            rename_policy_majority,
+        ),
+        ("names tabs after the largest pane", rename_policy_area),
     ];
 
     let mut failures = 0;
@@ -270,6 +275,126 @@ fn close_focused_tab(t: &mut Terminal) -> Result<()> {
 fn cd_into_dir(t: &mut Terminal, dir: &str) -> Result<()> {
     write_line(t, &format!("cd ~/{dir}"))?;
     expect_view_to_contain(t, &format!("~/{dir} $"), D5)?;
+    Ok(())
+}
+
+const ZELLIJ_CONFIG: &str = "/home/alice/.config/zellij/config.kdl";
+
+/// Writes a copy of the mounted test config with `rename_policy` set, so a
+/// session can run with a non-default policy.
+fn config_with_rename_policy(policy: &str) -> Result<String> {
+    let base = std::fs::read_to_string(ZELLIJ_CONFIG)?;
+    let setting = format!("rename_policy \"{policy}\"");
+    let patched = base.replacen(
+        "home_dir \"/home/alice\"",
+        &format!("home_dir \"/home/alice\"\n        {setting}"),
+        1,
+    );
+
+    if !patched.contains(&setting) {
+        return Err(format!("{ZELLIJ_CONFIG} has no home_dir line to extend").into());
+    }
+
+    let path = std::env::temp_dir().join(format!("tabula-config-{policy}.kdl"));
+    std::fs::write(&path, patched)?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+fn attach_with_config(t: &mut Terminal, config: &str, session: &str) -> Result<()> {
+    write_line(
+        t,
+        &format!("ZELLIJ_CONFIG_FILE={config} zellij attach -c {session}"),
+    )?;
+    expect_full_text_to_contain(t, "Pane #1", D10)?;
+    expect_full_text_to_contain(t, "Using config /home/alice/.zshrc", D5)?;
+    expect_view_to_contain(t, "~ $", D5)?;
+    dismiss_startup_dialog(t)?;
+    wait_for_plugin_load(t)?;
+    Ok(())
+}
+
+fn open_pane_in_dir(t: &mut Terminal, dir: &str) -> Result<()> {
+    write_line(
+        t,
+        &format!("zellij action new-pane --cwd /home/alice/{dir} -- /bin/zsh"),
+    )?;
+    expect_view_to_contain(t, &format!("~/{dir} $"), D8)?;
+    Ok(())
+}
+
+fn rename_policy_majority() -> Result<()> {
+    let mut t = spawn_zsh()?;
+    let session = format!("majority-session-{}", unique_suffix());
+    let config = config_with_rename_policy("majority")?;
+
+    expect_full_text_to_contain(&mut t, "Using config /home/alice/.zshrc", D5)?;
+    attach_with_config(&mut t, &config, &session)?;
+
+    write_line(&mut t, "mkdir -p repo notes")?;
+    cd_into_dir(&mut t, "repo")?;
+    expect_tab_bar_to_contain(&mut t, &format!("Zellij ({session})  ~/repo"), D8)?;
+
+    // One pane per directory: no majority, so the tab uses the common directory.
+    open_pane_in_dir(&mut t, "notes")?;
+    expect_tab_bar_to_contain(&mut t, &format!("Zellij ({session})  ~/* (2 panes)"), D8)?;
+
+    // Two of three panes are in ~/repo, which is now the majority.
+    open_pane_in_dir(&mut t, "repo")?;
+    expect_tab_bar_to_contain(&mut t, &format!("Zellij ({session})  ~/repo/"), D8)?;
+    expect_tab_bar_not_to_contain(&mut t, "~/* (3 panes)", D2)?;
+
+    // Two of four is no majority again, so it falls back to the common directory.
+    write_line(
+        &mut t,
+        "zellij action new-pane --cwd /home/alice -- /bin/zsh",
+    )?;
+    expect_view_to_contain(&mut t, "~ $", D8)?;
+    expect_tab_bar_to_contain(&mut t, &format!("Zellij ({session})  ~/* (4 panes)"), D8)?;
+    expect_tab_bar_not_to_contain(&mut t, &format!("Zellij ({session})  ~/repo/"), D2)?;
+    Ok(())
+}
+
+fn rename_policy_area() -> Result<()> {
+    let mut t = spawn_zsh()?;
+    let session = format!("area-session-{}", unique_suffix());
+    let config = config_with_rename_policy("area")?;
+
+    expect_full_text_to_contain(&mut t, "Using config /home/alice/.zshrc", D5)?;
+    attach_with_config(&mut t, &config, &session)?;
+
+    write_line(&mut t, "mkdir -p repo notes")?;
+    cd_into_dir(&mut t, "repo")?;
+    expect_tab_bar_to_contain(&mut t, &format!("Zellij ({session})  ~/repo"), D8)?;
+
+    // An even split has no largest pane, so the tab uses the common directory.
+    open_pane_in_dir(&mut t, "notes")?;
+    expect_tab_bar_to_contain(&mut t, &format!("Zellij ({session})  ~/* (2 panes)"), D8)?;
+
+    // Growing the ~/notes pane makes it the largest one, renaming the tab on resize.
+    write_line(&mut t, "zellij action resize increase left")?;
+    expect_tab_bar_to_contain(&mut t, &format!("Zellij ({session})  ~/notes"), D8)?;
+
+    // Back to an even split: no winner.
+    write_line(&mut t, "zellij action resize decrease left")?;
+    expect_tab_bar_to_contain(&mut t, &format!("Zellij ({session})  ~/* (2 panes)"), D8)?;
+
+    // Shrinking it further makes the ~/repo pane the largest one.
+    write_line(&mut t, "zellij action resize decrease left")?;
+    expect_tab_bar_to_contain(&mut t, &format!("Zellij ({session})  ~/repo"), D8)?;
+
+    // Moving the focus alone must not rename the tab.
+    write_line(&mut t, "zellij action move-focus left")?;
+    expect_tab_bar_to_contain(&mut t, &format!("Zellij ({session})  ~/repo"), D2)?;
+
+    // A larger floating pane elsewhere is ignored while there are tiled panes.
+    write_line(
+        &mut t,
+        "zellij action new-pane --floating --width 90% --height 70% \
+         --cwd /home/alice/notes -- /bin/zsh",
+    )?;
+    expect_view_to_contain(&mut t, "~/notes $", D8)?;
+    expect_tab_bar_to_contain(&mut t, &format!("Zellij ({session})  ~/repo"), D8)?;
+    expect_tab_bar_not_to_contain(&mut t, "~/notes", D2)?;
     Ok(())
 }
 
