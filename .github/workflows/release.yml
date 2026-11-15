@@ -28,7 +28,7 @@ jobs:
           targets: wasm32-wasip1
 
       - name: Build
-        run: cargo build --release
+        run: cargo build --release --target wasm32-wasip1
         working-directory: ./zellij
 
       - name: Build changelog

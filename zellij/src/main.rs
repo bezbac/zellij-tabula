@@ -942,6 +942,12 @@ mod tests {
         assert_eq!(parse_pane_status("none"), Some(PaneStatus::None));
         assert_eq!(parse_pane_status("busy"), None);
     }
+
+    // HACK: zellij provides this host function when running as a plugin. Defining it here lets
+    // the unit tests link natively (`cargo test --target <host triple>`).
+    #[cfg(not(target_arch = "wasm32"))]
+    #[no_mangle]
+    extern "C" fn host_run_plugin_command() {}
 }
 
 fn parse_rewrites(configuration: &BTreeMap<String, String>) -> Vec<Rewrite> {

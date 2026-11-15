@@ -32,7 +32,7 @@ zellij action new-tab --layout ./plugin-dev-workspace.kdl
 
 ## Otherwise
 
-1. Build the project: `cargo build` inside the `./zellij` directory
+1. Build the project: `cargo build --target wasm32-wasip1` inside the `./zellij` directory
 2. Load it inside a running Zellij session: `zellij action start-or-reload-plugin file:target/wasm32-wasip1/debug/rust-plugin-example.wasm`
 3. Repeat on changes (perhaps with a `watchexec` or similar command to run on fs changes).
 

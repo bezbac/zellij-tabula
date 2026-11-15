@@ -4,7 +4,7 @@ cd "$(git rev-parse --show-toplevel)"
 
 # Build latest version of the plugin
 cd ./zellij
-RUSTUP_TOOLCHAIN=1.96.1 cargo build --release
+RUSTUP_TOOLCHAIN=1.96.1 cargo build --release --target wasm32-wasip1
 
 # Build the docker image
 cd ..

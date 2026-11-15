@@ -23,7 +23,10 @@ jobs:
         run: cargo fmt --check
 
       - name: Check clippy
-        run: cargo clippy -- -D clippy::all -D clippy::pedantic -A clippy::no_mangle_with_rust_abi
+        run: cargo clippy --target wasm32-wasip1 -- -D clippy::all -D clippy::pedantic -A clippy::no_mangle_with_rust_abi
+
+      - name: Run unit tests
+        run: cargo test
 
   check-integration-tests:
     runs-on: ubuntu-latest
